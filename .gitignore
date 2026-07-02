@@ -1,3 +1,20 @@
 # planning docs, local only
 PLANNING.md
 ROADMAP.md
+
+# --- Runtime data (not repo data) ---
+simple_account_balancer.db
+backups/
+Debug_Log_*.txt
+*.pref
+
+# --- Python ---
+__pycache__/
+
+# --- PyInstaller build artifacts ---
+build/
+dist/
+*.spec
+
+# --- Local launch / debug ---
+Launch_*.bat
