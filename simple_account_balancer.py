@@ -5,17 +5,15 @@ JDE-Projects "Simple X Tool": Python 3 + PySide6/pywebview, single-file UI.
 The register is the source of truth for "how much money do I actually have."
 All money is stored and computed as integer cents; never floats.
 
-Phase 3 scope: one account, transaction entry with add/edit/delete, a rolling
-balance that recalculates for out-of-order entry/edit/delete, SQLite storage
-with rolling backups, a writable-location startup check, and the themed UI
-shell with the standard header/bottom bar.
-
-Phase 6 adds CSV export, an account switcher with account create and delete,
-a relocatable backup folder with a user-set keep count and backups taken on
-every launch and exit, in-app restore from a backup with an automatic
-pre-restore safety copy, and a schema version guard against opening a
-database written by a newer version of the app.
+Features: a multi-account register with add/edit/delete and a rolling
+balance that recalculates for out-of-order entry, a reconcile view with a
+discrepancy finder, CSV export, an autopay catalog of recurring rules that
+post real uncleared transactions at launch, and SQLite storage with rolling
+backups (relocatable backup folder, in-app restore with a pre-restore
+safety copy) plus a schema version guard against databases written by a
+newer build.
 """
+import calendar
 import ctypes
 import datetime
 import itertools
@@ -43,7 +41,7 @@ BACKUP_KEEP = 5
 BACKUP_KEEP_MIN = 1
 BACKUP_KEEP_MAX = 50
 PRERESTORE_KEEP = 3
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_RANGE_DAYS = 30
 
 # Regular backups: balancer_YYYYMMDD_HHMMSS.db
@@ -120,6 +118,23 @@ def parse_iso_date(raw):
     except ValueError:
         return None, "Enter a valid date."
     return s, None
+
+
+def advance_one_month(iso_date: str, anchor_day: int) -> str:
+    """Return iso_date advanced by one calendar month, re-anchored to
+    anchor_day and clamped to that month's length so a day-31 anchor still
+    lands somewhere sensible in short months, e.g. Jan 31 -> Feb 28 -> Mar 31,
+    with no drift back toward the 28th. Handles the December -> January
+    year rollover."""
+    d = datetime.date.fromisoformat(iso_date)
+    year = d.year
+    month = d.month + 1
+    if month > 12:
+        month = 1
+        year += 1
+    last_day = calendar.monthrange(year, month)[1]
+    day = min(anchor_day, last_day)
+    return datetime.date(year, month, day).isoformat()
 
 
 def cents_to_decimal_str(cents: int) -> str:
@@ -225,6 +240,19 @@ def open_db(path: str) -> sqlite3.Connection:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE COLLATE NOCASE
         );
+        CREATE TABLE IF NOT EXISTS autopays (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id INTEGER NOT NULL REFERENCES accounts(id),
+            payee TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            amount_cents INTEGER NOT NULL,
+            next_pay_date TEXT NOT NULL,
+            next_post_date TEXT NOT NULL,
+            pay_day INTEGER NOT NULL,
+            post_day INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+        );
         """
     )
     if categories_is_new:
@@ -259,6 +287,7 @@ class Api:
         self._debug = False
         self._debug_path = None
         self.backup_notice = None
+        self.autopay_notice = None
 
     def set_window(self, w):
         self._window = w
@@ -294,6 +323,18 @@ class Api:
         ).fetchone()[0]
         return account["starting_balance_cents"] + total
 
+    def _today_balance_cents(self, account) -> int:
+        """Balance counting only transactions dated today or earlier, unlike
+        current_balance_cents which counts the full register including any
+        future-dated rows."""
+        cur = self._conn.cursor()
+        today = datetime.date.today().isoformat()
+        total = cur.execute(
+            "SELECT COALESCE(SUM(amount_cents), 0) FROM transactions WHERE account_id=? AND date<=?",
+            (account["id"], today),
+        ).fetchone()[0]
+        return account["starting_balance_cents"] + total
+
     def _account_payload(self, account):
         tx_count = self._conn.execute(
             "SELECT COUNT(*) FROM transactions WHERE account_id=?", (account["id"],)
@@ -304,6 +345,7 @@ class Api:
             "starting_balance_cents": account["starting_balance_cents"],
             "starting_date": account["starting_date"],
             "current_balance_cents": self._current_balance_cents(account),
+            "today_balance_cents": self._today_balance_cents(account),
             "transaction_count": tx_count,
             "starting_balance_prev_cents": account["starting_balance_prev_cents"],
             "starting_balance_changed_at": account["starting_balance_changed_at"],
@@ -340,6 +382,7 @@ class Api:
                 "backup_folder_is_custom": backup_is_custom,
                 "backup_keep": _clamp_backup_keep(prefs.get("backup_keep")),
                 "backup_notice": self.backup_notice,
+                "autopay_notice": self.autopay_notice,
             }
         except Exception as e:
             self.log(f"get_config failed: {e}")
@@ -391,9 +434,9 @@ class Api:
             return {"ok": False, "error": "Couldn't switch accounts."}
 
     def delete_account(self, account_id):
-        """Delete an account and its transactions. Refuses to delete the
-        only account. If the deleted account was active, the active pref
-        moves to the first remaining account."""
+        """Delete an account and its transactions and autopays. Refuses to
+        delete the only account. If the deleted account was active, the
+        active pref moves to the first remaining account."""
         try:
             cur = self._conn.cursor()
             account = self._get_account(account_id)
@@ -406,6 +449,7 @@ class Api:
                 "SELECT COUNT(*) FROM transactions WHERE account_id=?", (account["id"],)
             ).fetchone()[0]
             cur.execute("DELETE FROM transactions WHERE account_id=?", (account["id"],))
+            cur.execute("DELETE FROM autopays WHERE account_id=?", (account["id"],))
             cur.execute("DELETE FROM accounts WHERE id=?", (account["id"],))
             self._conn.commit()
             prefs = load_prefs()
@@ -638,10 +682,16 @@ class Api:
                     or search_s in (row["notes"] or "").lower()
                 ]
 
+            today_s = datetime.date.today().isoformat()
+            today_balance_cents = account["starting_balance_cents"] + sum(
+                row["amount_cents"] for row in computed if row["date"] <= today_s
+            )
+
             return {
                 "ok": True,
                 "rows": visible,
                 "current_balance_cents": current_balance_cents,
+                "today_balance_cents": today_balance_cents,
                 "transaction_count": len(computed),
             }
         except Exception as e:
@@ -731,6 +781,203 @@ class Api:
         except Exception as e:
             self.log(f"delete_transaction failed: {e}")
             return {"ok": False, "error": "Couldn't delete the transaction."}
+
+    # --- autopays ---------------------------------------------------------------
+    def get_autopays(self, account_id):
+        """Autopay rules for the account, ordered by their post-day anchor
+        then payee, so the list reads roughly in the order rules land in
+        the register each month."""
+        try:
+            account = self._get_account(account_id)
+            if account is None:
+                return {"ok": False, "error": "No account exists yet."}
+            cur = self._conn.cursor()
+            rows = cur.execute(
+                "SELECT id, payee, category, notes, amount_cents, next_post_date, "
+                "next_pay_date, post_day, pay_day FROM autopays WHERE account_id=? "
+                "ORDER BY post_day, payee COLLATE NOCASE",
+                (account["id"],),
+            ).fetchall()
+            autopays = [
+                {
+                    "id": r["id"],
+                    "payee": r["payee"],
+                    "category": r["category"],
+                    "notes": r["notes"],
+                    "amount_cents": r["amount_cents"],
+                    "next_post_date": r["next_post_date"],
+                    "next_pay_date": r["next_pay_date"],
+                    "post_day": r["post_day"],
+                    "pay_day": r["pay_day"],
+                }
+                for r in rows
+            ]
+            return {"ok": True, "autopays": autopays}
+        except Exception as e:
+            self.log(f"get_autopays failed: {e}")
+            return {"ok": False, "error": "Couldn't load the autopays."}
+
+    def add_autopay(self, account_id, payee, category, notes, amount, direction, post_date, pay_date):
+        """Create a recurring autopay rule. post_date and pay_date are the
+        first occurrence; their day numbers become the hidden post_day and
+        pay_day anchors used to advance the rule each month."""
+        try:
+            account = self._get_account(account_id)
+            if account is None:
+                return {"ok": False, "error": "No account exists yet."}
+            payee_s = (payee or "").strip()
+            if not payee_s:
+                return {"ok": False, "error": "Payee / description is required."}
+            if direction not in ("withdraw", "deposit"):
+                return {"ok": False, "error": "Choose withdraw or deposit."}
+            cents, err = parse_amount_to_cents(amount, allow_negative=False, allow_zero=False)
+            if err:
+                return {"ok": False, "error": err}
+            post_s, err = parse_iso_date(post_date)
+            if err:
+                return {"ok": False, "error": err}
+            pay_s, err = parse_iso_date(pay_date)
+            if err:
+                return {"ok": False, "error": err}
+            if post_s > pay_s:
+                return {"ok": False, "error": "The register date must be on or before the pay date."}
+            signed = -cents if direction == "withdraw" else cents
+            category_s = (category or "").strip()
+            notes_s = (notes or "").strip()
+            post_day = datetime.date.fromisoformat(post_s).day
+            pay_day = datetime.date.fromisoformat(pay_s).day
+            now = datetime.datetime.now().isoformat(timespec="seconds")
+            cur = self._conn.cursor()
+            cur.execute(
+                "INSERT INTO autopays "
+                "(account_id, payee, category, notes, amount_cents, next_pay_date, "
+                "next_post_date, pay_day, post_day, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (account["id"], payee_s, category_s, notes_s, signed, pay_s, post_s, pay_day, post_day, now),
+            )
+            if category_s:
+                cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
+            self._conn.commit()
+            self.log(f"Added autopay: {payee_s!r} {signed}c, next post {post_s}, next pay {pay_s}")
+            return self.get_autopays(account["id"])
+        except Exception as e:
+            self.log(f"add_autopay failed: {e}")
+            return {"ok": False, "error": "Couldn't add the autopay."}
+
+    def update_autopay(self, autopay_id, payee, category, notes, amount, direction, post_date, pay_date):
+        """Edit an autopay rule. Re-anchoring post_day/pay_day from the newly
+        chosen dates is the point of editing them, so both are recomputed."""
+        try:
+            cur = self._conn.cursor()
+            row = cur.execute("SELECT id, account_id FROM autopays WHERE id=?", (autopay_id,)).fetchone()
+            if row is None:
+                return {"ok": False, "error": "That autopay no longer exists."}
+            payee_s = (payee or "").strip()
+            if not payee_s:
+                return {"ok": False, "error": "Payee / description is required."}
+            if direction not in ("withdraw", "deposit"):
+                return {"ok": False, "error": "Choose withdraw or deposit."}
+            cents, err = parse_amount_to_cents(amount, allow_negative=False, allow_zero=False)
+            if err:
+                return {"ok": False, "error": err}
+            post_s, err = parse_iso_date(post_date)
+            if err:
+                return {"ok": False, "error": err}
+            pay_s, err = parse_iso_date(pay_date)
+            if err:
+                return {"ok": False, "error": err}
+            if post_s > pay_s:
+                return {"ok": False, "error": "The register date must be on or before the pay date."}
+            signed = -cents if direction == "withdraw" else cents
+            category_s = (category or "").strip()
+            notes_s = (notes or "").strip()
+            post_day = datetime.date.fromisoformat(post_s).day
+            pay_day = datetime.date.fromisoformat(pay_s).day
+            cur.execute(
+                "UPDATE autopays SET payee=?, category=?, notes=?, amount_cents=?, "
+                "next_pay_date=?, next_post_date=?, pay_day=?, post_day=? WHERE id=?",
+                (payee_s, category_s, notes_s, signed, pay_s, post_s, pay_day, post_day, autopay_id),
+            )
+            if category_s:
+                cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
+            self._conn.commit()
+            self.log(f"Updated autopay {autopay_id}: {payee_s!r} {signed}c, next post {post_s}, next pay {pay_s}")
+            return self.get_autopays(row["account_id"])
+        except Exception as e:
+            self.log(f"update_autopay failed: {e}")
+            return {"ok": False, "error": "Couldn't update the autopay."}
+
+    def delete_autopay(self, autopay_id):
+        try:
+            cur = self._conn.cursor()
+            row = cur.execute("SELECT id, account_id FROM autopays WHERE id=?", (autopay_id,)).fetchone()
+            if row is None:
+                return {"ok": False, "error": "That autopay no longer exists."}
+            cur.execute("DELETE FROM autopays WHERE id=?", (autopay_id,))
+            self._conn.commit()
+            self.log(f"Deleted autopay {autopay_id}")
+            return self.get_autopays(row["account_id"])
+        except Exception as e:
+            self.log(f"delete_autopay failed: {e}")
+            return {"ok": False, "error": "Couldn't delete the autopay."}
+
+    def post_due_autopays(self):
+        """Called from main() at launch, not from the UI. Posts a real
+        uncleared transaction for every autopay rule whose next_post_date has
+        arrived, then advances that rule's dates. All inserts and date
+        advances for every rule commit together in one transaction at the
+        end, so a crash partway through can never leave a posted transaction
+        whose rule didn't also advance (that would double-post next launch).
+        Returns the number of transactions posted; doesn't return an {"ok"}
+        dict since it isn't a UI-facing bridge method."""
+        today = datetime.date.today().isoformat()
+        now = datetime.datetime.now().isoformat(timespec="seconds")
+        posted_count = 0
+        try:
+            cur = self._conn.cursor()
+            rules = cur.execute(
+                "SELECT id, account_id, payee, category, notes, amount_cents, "
+                "next_pay_date, next_post_date, pay_day, post_day FROM autopays"
+            ).fetchall()
+            for rule in rules:
+                next_pay_date = rule["next_pay_date"]
+                next_post_date = rule["next_post_date"]
+                iterations = 0
+                while next_post_date <= today:
+                    iterations += 1
+                    if iterations > 120:
+                        self.log(
+                            f"post_due_autopays: autopay {rule['id']} ({rule['payee']!r}) "
+                            f"hit the 120-iteration safety cap; stopping this rule for now."
+                        )
+                        break
+                    cur.execute(
+                        "INSERT INTO transactions "
+                        "(account_id, date, payee, category, notes, amount_cents, cleared, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
+                        (
+                            rule["account_id"], next_pay_date, rule["payee"], rule["category"],
+                            rule["notes"], rule["amount_cents"], now,
+                        ),
+                    )
+                    posted_count += 1
+                    next_pay_date = advance_one_month(next_pay_date, rule["pay_day"])
+                    next_post_date = advance_one_month(next_post_date, rule["post_day"])
+                cur.execute(
+                    "UPDATE autopays SET next_pay_date=?, next_post_date=? WHERE id=?",
+                    (next_pay_date, next_post_date, rule["id"]),
+                )
+            self._conn.commit()
+            if posted_count == 1:
+                self.autopay_notice = "Added 1 autopay to the register."
+            elif posted_count > 1:
+                self.autopay_notice = f"Added {posted_count} autopays to the register."
+            self.log(f"post_due_autopays: posted {posted_count} transaction(s)")
+            return posted_count
+        except Exception as e:
+            self._conn.rollback()
+            self.log(f"post_due_autopays failed: {e}")
+            return 0
 
     # --- reconcile --------------------------------------------------------------
     def _reconcile_summary(self, account) -> dict:
@@ -1559,6 +1806,13 @@ def main():
         sys.exit(1)
 
     api.set_conn(conn)
+
+    # post_due_autopays already commits/rolls back internally; this guard is
+    # belt and suspenders so a posting failure can never block launch.
+    try:
+        api.post_due_autopays()
+    except Exception as e:
+        api.log(f"post_due_autopays call failed: {e}")
 
     win = webview.create_window(
         "Simple Account Balancer",
