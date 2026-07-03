@@ -33,6 +33,13 @@ BACKUP_DIRNAME = "backups"
 BACKUP_KEEP = 5
 DEFAULT_RANGE_DAYS = 30
 
+SEED_CATEGORIES = [
+    "Auto", "Charity", "Dining", "Entertainment", "Fees", "Gas", "Gifts",
+    "Groceries", "Healthcare", "Home", "Income", "Insurance", "Personal",
+    "Rent/Mortgage", "Shopping", "Subscriptions", "Transfer", "Travel",
+    "Utilities",
+]
+
 
 def resource_path(rel: str) -> str:
     """Path to a bundled resource, working both from source and PyInstaller."""
@@ -104,6 +111,15 @@ def open_db(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+
+    # Check before creating so we only seed categories the first time this
+    # table shows up (fresh db or an upgraded Phase 3 db); later runs must
+    # never re-add categories the user deliberately deleted.
+    existing = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='categories'"
+    ).fetchone()
+    categories_is_new = existing is None
+
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS accounts (
@@ -124,8 +140,25 @@ def open_db(path: str) -> sqlite3.Connection:
             cleared INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE COLLATE NOCASE
+        );
         """
     )
+    if categories_is_new:
+        conn.executemany(
+            "INSERT OR IGNORE INTO categories (name) VALUES (?)",
+            [(c,) for c in SEED_CATEGORIES],
+        )
+
+    # Migration for databases created before the starting-balance change note:
+    # remember the previous amount and when it was last edited.
+    account_cols = {r["name"] for r in conn.execute("PRAGMA table_info(accounts)")}
+    if "starting_balance_prev_cents" not in account_cols:
+        conn.execute("ALTER TABLE accounts ADD COLUMN starting_balance_prev_cents INTEGER")
+        conn.execute("ALTER TABLE accounts ADD COLUMN starting_balance_changed_at TEXT")
+
     conn.commit()
     return conn
 
@@ -161,12 +194,18 @@ class Api:
         return account["starting_balance_cents"] + total
 
     def _account_payload(self, account):
+        tx_count = self._conn.execute(
+            "SELECT COUNT(*) FROM transactions WHERE account_id=?", (account["id"],)
+        ).fetchone()[0]
         return {
             "id": account["id"],
             "name": account["name"],
             "starting_balance_cents": account["starting_balance_cents"],
             "starting_date": account["starting_date"],
             "current_balance_cents": self._current_balance_cents(account),
+            "transaction_count": tx_count,
+            "starting_balance_prev_cents": account["starting_balance_prev_cents"],
+            "starting_balance_changed_at": account["starting_balance_changed_at"],
         }
 
     def get_config(self):
@@ -226,10 +265,20 @@ class Api:
             if err:
                 return {"ok": False, "error": err}
             cur = self._conn.cursor()
-            cur.execute(
-                "UPDATE accounts SET name=?, starting_balance_cents=?, starting_date=? WHERE id=?",
-                (name_s, cents, date_s, account["id"]),
-            )
+            if cents != account["starting_balance_cents"]:
+                # Remember the last starting-balance change so account settings
+                # can show a "last changed ... from X to Y" note.
+                now = datetime.datetime.now().isoformat(timespec="seconds")
+                cur.execute(
+                    "UPDATE accounts SET name=?, starting_balance_cents=?, starting_date=?, "
+                    "starting_balance_prev_cents=?, starting_balance_changed_at=? WHERE id=?",
+                    (name_s, cents, date_s, account["starting_balance_cents"], now, account["id"]),
+                )
+            else:
+                cur.execute(
+                    "UPDATE accounts SET name=?, starting_balance_cents=?, starting_date=? WHERE id=?",
+                    (name_s, cents, date_s, account["id"]),
+                )
             self._conn.commit()
             self.log(f"Account {account['id']} updated: {name_s!r} starting {cents}c as of {date_s}")
             return self.get_config()
@@ -237,10 +286,132 @@ class Api:
             self.log(f"update_account failed: {e}")
             return {"ok": False, "error": "Couldn't update the account."}
 
+    # --- categories -------------------------------------------------------------
+    def get_categories(self):
+        """Name-sorted category list with usage counts (case-insensitive)."""
+        try:
+            cur = self._conn.cursor()
+            rows = cur.execute(
+                "SELECT c.id, c.name, "
+                "(SELECT COUNT(*) FROM transactions t WHERE t.category = c.name COLLATE NOCASE) AS used_count "
+                "FROM categories c ORDER BY c.name COLLATE NOCASE"
+            ).fetchall()
+            categories = [
+                {"id": r["id"], "name": r["name"], "used_count": r["used_count"]} for r in rows
+            ]
+            return {"ok": True, "categories": categories}
+        except Exception as e:
+            self.log(f"get_categories failed: {e}")
+            return {"ok": False, "error": "Couldn't load the categories."}
+
+    def add_category(self, name):
+        try:
+            name_s = (name or "").strip()
+            if not name_s:
+                return {"ok": False, "error": "Category name is required."}
+            cur = self._conn.cursor()
+            cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (name_s,))
+            self._conn.commit()
+            self.log(f"Category added: {name_s!r}")
+            return self.get_categories()
+        except Exception as e:
+            self.log(f"add_category failed: {e}")
+            return {"ok": False, "error": "Couldn't add the category."}
+
+    def rename_category(self, category_id, new_name):
+        """Rename a category and carry the change over to past transactions.
+        If the new name collides with another existing category, the two are
+        merged: transactions move to the existing category and this row goes away."""
+        try:
+            cur = self._conn.cursor()
+            row = cur.execute("SELECT id, name FROM categories WHERE id=?", (category_id,)).fetchone()
+            if row is None:
+                return {"ok": False, "error": "That category no longer exists."}
+            new_name_s = (new_name or "").strip()
+            if not new_name_s:
+                return {"ok": False, "error": "Category name is required."}
+            old_name = row["name"]
+            merge_target = cur.execute(
+                "SELECT id, name FROM categories WHERE name=? COLLATE NOCASE AND id<>?",
+                (new_name_s, category_id),
+            ).fetchone()
+            if merge_target is not None:
+                cur.execute(
+                    "UPDATE transactions SET category=? WHERE category=? COLLATE NOCASE",
+                    (merge_target["name"], old_name),
+                )
+                cur.execute("DELETE FROM categories WHERE id=?", (category_id,))
+                self._conn.commit()
+                self.log(f"Category {old_name!r} merged into {merge_target['name']!r}")
+                return self.get_categories()
+            cur.execute("UPDATE categories SET name=? WHERE id=?", (new_name_s, category_id))
+            cur.execute(
+                "UPDATE transactions SET category=? WHERE category=? COLLATE NOCASE",
+                (new_name_s, old_name),
+            )
+            self._conn.commit()
+            self.log(f"Category {old_name!r} renamed to {new_name_s!r}")
+            return self.get_categories()
+        except Exception as e:
+            self.log(f"rename_category failed: {e}")
+            return {"ok": False, "error": "Couldn't rename the category."}
+
+    def delete_category(self, category_id, reassign_to=None):
+        """Delete a category. Past transactions keep the old label unless
+        reassign_to names another category to move them to."""
+        try:
+            cur = self._conn.cursor()
+            row = cur.execute("SELECT id, name FROM categories WHERE id=?", (category_id,)).fetchone()
+            if row is None:
+                return {"ok": False, "error": "That category no longer exists."}
+            old_name = row["name"]
+            reassign_s = (reassign_to or "").strip()
+            if reassign_s:
+                cur.execute(
+                    "UPDATE transactions SET category=? WHERE category=? COLLATE NOCASE",
+                    (reassign_s, old_name),
+                )
+            cur.execute("DELETE FROM categories WHERE id=?", (category_id,))
+            self._conn.commit()
+            detail = f" (reassigned to {reassign_s!r})" if reassign_s else ""
+            self.log(f"Category deleted: {old_name!r}{detail}")
+            return self.get_categories()
+        except Exception as e:
+            self.log(f"delete_category failed: {e}")
+            return {"ok": False, "error": "Couldn't delete the category."}
+
     # --- transactions ---------------------------------------------------------
-    def get_transactions(self, account_id=None):
-        """Rows for the default (last 30 days) range, with balances computed
-        over the FULL history so the first visible row's balance is correct."""
+    def get_payees(self, account_id=None):
+        """Distinct payees for the account, most-recent-first, each carrying
+        the category from its most recent transaction (max date, then max id)."""
+        try:
+            account = self._get_account(account_id)
+            if account is None:
+                return {"ok": False, "error": "No account exists yet."}
+            cur = self._conn.cursor()
+            rows = cur.execute(
+                "SELECT payee, category FROM transactions WHERE account_id=? "
+                "ORDER BY date DESC, id DESC",
+                (account["id"],),
+            ).fetchall()
+            seen = set()
+            payees = []
+            for r in rows:
+                key = r["payee"].strip().lower()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                payees.append({"payee": r["payee"], "last_category": r["category"]})
+            return {"ok": True, "payees": payees}
+        except Exception as e:
+            self.log(f"get_payees failed: {e}")
+            return {"ok": False, "error": "Couldn't load the payees."}
+
+    def get_transactions(self, account_id=None, from_date=None, to_date=None, search=""):
+        """Rows for the given date range and search text, with balances computed
+        over the FULL history so the first visible row's balance is correct.
+        The balance column always reflects the true register, never a filtered
+        sum. With no from_date, falls back to the last 30 days."""
         try:
             account = self._get_account(account_id)
             if account is None:
@@ -270,14 +441,30 @@ class Api:
                 )
             current_balance_cents = running
 
-            cutoff = (datetime.date.today() - datetime.timedelta(days=DEFAULT_RANGE_DAYS)).isoformat()
-            visible = [row for row in computed if row["date"] >= cutoff]
+            from_s = (from_date or "").strip()
+            if not from_s:
+                from_s = (datetime.date.today() - datetime.timedelta(days=DEFAULT_RANGE_DAYS)).isoformat()
+            to_s = (to_date or "").strip()
+
+            visible = [row for row in computed if row["date"] >= from_s]
+            if to_s:
+                visible = [row for row in visible if row["date"] <= to_s]
+
+            search_s = (search or "").strip().lower()
+            if search_s:
+                visible = [
+                    row
+                    for row in visible
+                    if search_s in (row["payee"] or "").lower()
+                    or search_s in (row["category"] or "").lower()
+                    or search_s in (row["notes"] or "").lower()
+                ]
 
             return {
                 "ok": True,
                 "rows": visible,
                 "current_balance_cents": current_balance_cents,
-                "range_days": DEFAULT_RANGE_DAYS,
+                "transaction_count": len(computed),
             }
         except Exception as e:
             self.log(f"get_transactions failed: {e}")
@@ -310,6 +497,8 @@ class Api:
                 "VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
                 (account["id"], date_s, payee_s, category_s, notes_s, signed, now),
             )
+            if category_s:
+                cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
             self._conn.commit()
             self.log(f"Added transaction: {date_s} {payee_s!r} {signed}c")
             return {"ok": True}
@@ -342,6 +531,8 @@ class Api:
                 "WHERE id=?",
                 (date_s, payee_s, category_s, notes_s, signed, transaction_id),
             )
+            if category_s:
+                cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
             self._conn.commit()
             self.log(f"Updated transaction {transaction_id}: {date_s} {payee_s!r} {signed}c")
             return {"ok": True}
