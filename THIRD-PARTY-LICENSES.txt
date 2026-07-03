@@ -1,0 +1,25 @@
+Simple Account Balancer: Third-Party Licenses
+==============================================
+
+The Simple Account Balancer source is released under the PolyForm Noncommercial
+License 1.0.0 (see LICENSE). The packaged Windows build bundles the third-party
+components below; each remains under its own license. This file is a notice,
+not legal advice.
+
+# Always bundled (every app)
+PySide6 / Qt     LGPL-3.0       https://www.qt.io/licensing/
+pywebview        BSD-3-Clause   https://github.com/r0x0r/pywebview
+Sora (font)      OFL-1.1        https://github.com/sora-xor/sora-font
+JetBrains Mono   OFL-1.1        https://github.com/JetBrains/JetBrainsMono
+
+# Per-app components
+This tool uses only the Python standard library, so it bundles nothing beyond
+the always-bundled block above.
+
+Notice lines
+------------
+Sora             Copyright 2019 The Sora Project Authors
+JetBrains Mono   Copyright 2020 The JetBrains Mono Project Authors
+
+PySide6 / Qt is LGPL (not GPL), and the build ships --onedir so the bundled Qt
+libraries stay replaceable. Full license texts are available at the URLs above.

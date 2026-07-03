@@ -1,0 +1,4 @@
+Getting started:
+1. Launch Simple Account Balancer and enter your starting balance as of a date.
+2. Log each debit or credit the moment it happens - the header balance is always your real balance.
+3. Use the Reconcile tab to check entries off against your bank statement, and the discrepancy finder if the numbers disagree.

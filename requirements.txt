@@ -1,0 +1,9 @@
+# Pinned build dependencies for Simple Account Balancer.
+# Versions match the local verified build (Python 3.14).
+# This tool imports nothing beyond the standard library plus pywebview/PySide6,
+# so no extra runtime deps are pinned here.
+# Dependabot opens review-PRs when newer releases appear.
+pywebview==6.2.1
+PySide6==6.11.1
+qtpy==2.4.3
+pyinstaller==6.19.0

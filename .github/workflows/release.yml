@@ -1,0 +1,17 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+jobs:
+  release:
+    uses: JDE-Projects/Build-Tools/.github/workflows/release.yml@41745cdc5e4ff7416d18e1b51e408ee62c93849e # Build-Tools main (installer support)
+    permissions:
+      id-token: write
+      attestations: write
+      contents: write
+    with:
+      app_name: SimpleAccountBalancer
+      dist_subfolder: "Simple Account Balancer"
+      python_version: "3.14"
+      build_command: "Build_Simple_Account_Balancer.bat"
+      app_id: "ecf669e1-0749-43af-86c3-f74c48bc21f3"
