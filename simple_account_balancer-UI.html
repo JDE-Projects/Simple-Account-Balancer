@@ -74,7 +74,32 @@ header {
 /* ---- header center: account + big balance (the app's centerpiece) ---- */
 .head-center { flex:1; display:flex; flex-direction:column; align-items:center; min-width:0; padding-top:2px; }
 .acct-row { display:flex; align-items:center; gap:8px; }
-.acct-name { font-size:14px; font-weight:600; color:var(--text-dim); letter-spacing:.2px; }
+.acct-trigger {
+  display:flex; align-items:center; gap:5px; background:transparent; border:none;
+  padding:2px 4px; border-radius:var(--radius-sm); cursor:pointer; transition:.15s;
+}
+.acct-trigger:hover, .acct-trigger.open { color:var(--accent); }
+.acct-trigger:hover .acct-name, .acct-trigger.open .acct-name { color:var(--accent); }
+.acct-name { font-size:14px; font-weight:600; color:var(--text-dim); letter-spacing:.2px; transition:.15s; }
+.acct-chevron { width:12px; height:12px; color:var(--text-faint); transition:transform .15s; flex:0 0 auto; }
+.acct-trigger:hover .acct-chevron, .acct-trigger.open .acct-chevron { color:var(--accent); }
+.acct-trigger.open .acct-chevron { transform:rotate(180deg); }
+
+/* ---- account switcher dropdown ---- */
+.acct-menu {
+  position:fixed; z-index:90; background:var(--panel-2); border:1px solid var(--border-2);
+  border-radius:var(--radius-sm); box-shadow:0 10px 30px rgba(0,0,0,.4);
+  min-width:190px; max-height:280px; overflow-y:auto; display:none; padding:5px;
+}
+.acct-menu.open { display:block; }
+.acct-menu-item {
+  display:flex; align-items:center; gap:8px; padding:7px 9px; font-size:12.5px; color:var(--text);
+  cursor:pointer; border-radius:6px; transition:.15s; white-space:nowrap;
+}
+.acct-menu-item:hover { background:color-mix(in srgb, var(--accent) 12%, transparent); }
+.acct-menu-check { width:14px; flex:0 0 auto; color:var(--accent); font-size:12px; text-align:center; }
+.acct-menu-sep { height:1px; background:var(--border); margin:4px 3px; }
+.acct-menu-add { color:var(--accent); font-weight:600; }
 .gear-btn {
   background:transparent; border:1px solid var(--border-2); border-radius:var(--radius-sm);
   width:24px; height:24px; display:flex; align-items:center; justify-content:center;
@@ -189,6 +214,7 @@ button.btn:disabled { opacity:.45; cursor:default; transform:none; }
 }
 .range-custom input[type=date]:focus { border-color:var(--accent); }
 .range-to-sep { font-size:11.5px; color:var(--text-faint); }
+.toolbar-right { display:flex; align-items:center; gap:10px; }
 .toolbar-search { position:relative; display:flex; align-items:center; }
 .toolbar-search input {
   font-family:"Sora", sans-serif; font-size:12.5px; color:var(--text); width:220px;
@@ -347,6 +373,39 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
 .modal .m-foot { display:flex; justify-content:flex-end; gap:8px; margin-top:4px; }
 .modal .err { color:var(--red); font-size:12px; margin-top:-6px; margin-bottom:10px; min-height:1em; }
 .am-note { font-size:11.5px; color:var(--text-faint); line-height:1.5; margin:-4px 0 12px; }
+.export-note { font-size:12.5px; color:var(--green); margin:-4px 0 12px; }
+
+/* ---- account settings modal: backups + delete-account sections ---- */
+.am-section { margin-top:18px; padding-top:14px; border-top:1px solid var(--border); }
+.am-section-title {
+  font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase;
+  color:var(--text-faint); margin-bottom:8px;
+}
+.am-section-title.danger { color:var(--red); }
+.am-hint { font-size:11.5px; color:var(--text-faint); line-height:1.5; margin-bottom:8px; }
+.am-backup-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.am-backup-path {
+  flex:1; font-size:12px; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; min-width:0;
+}
+.am-keep-label { font-size:12px; color:var(--text-dim); white-space:nowrap; }
+.am-keep-input {
+  font-family:"JetBrains Mono", monospace; font-size:13px; color:var(--text); width:56px; text-align:center;
+  background:var(--panel-2); border:1px solid var(--border-2); border-radius:var(--radius-sm);
+  padding:6px 4px; outline:none; transition:.15s;
+}
+.am-keep-input:focus { border-color:var(--accent); }
+
+/* ---- restore-from-backup screens (inside the account settings modal) ---- */
+.restore-list { max-height:280px; overflow-y:auto; margin:4px 0 10px; border-top:1px solid var(--border); }
+.restore-row {
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding:9px 4px; border-bottom:1px solid var(--border); cursor:pointer; transition:.15s;
+}
+.restore-row:hover { background:color-mix(in srgb, var(--accent) 8%, transparent); }
+.restore-row-date { font-size:12.5px; color:var(--text); }
+.restore-row-tag { font-size:11px; color:var(--text-faint); }
+.restore-empty { padding:14px 4px; font-size:12.5px; color:var(--text-faint); }
 
 /* ---- manage categories modal ---- */
 .cat-modal { width:420px; }
@@ -385,7 +444,16 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
   display:flex; align-items:center; justify-content:space-between; padding:0 18px;
 }
 .bottom-bar .bar-left, .bottom-bar .bar-right { display:flex; align-items:center; gap:10px; flex:none; }
-.bottom-bar .bar-center { flex:1; display:flex; align-items:center; justify-content:center; }
+.bottom-bar .bar-center { flex:1; display:flex; align-items:center; justify-content:center; gap:14px; }
+
+.backup-notice { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:var(--amber); }
+.backup-notice .notice-dismiss {
+  width:16px; height:16px; border:none; background:transparent; color:var(--amber);
+  cursor:pointer; border-radius:4px; display:flex; align-items:center; justify-content:center;
+  opacity:.75; transition:.15s; padding:0;
+}
+.backup-notice .notice-dismiss:hover { opacity:1; background:color-mix(in srgb, var(--amber) 15%, transparent); }
+.backup-notice .notice-dismiss svg { width:11px; height:11px; }
 
 .dbg-toggle { display:inline-flex; align-items:center; gap:7px; cursor:pointer; user-select:none; }
 .dbg-toggle input { position:absolute; opacity:0; pointer-events:none; }
@@ -419,7 +487,10 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
     </div>
     <div class="head-center" id="headCenter" style="display:none;">
       <div class="acct-row">
-        <span class="acct-name" id="acctName">Checking</span>
+        <button type="button" class="acct-trigger" id="acctTrigger" onclick="toggleAccountMenu()" title="Switch account">
+          <span class="acct-name" id="acctName">Checking</span>
+          <svg class="acct-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
         <button class="gear-btn" id="gearBtn" onclick="openAccountModal()" title="Account settings">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"/>
@@ -441,6 +512,8 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
       </button>
     </div>
   </header>
+
+  <div class="acct-menu" id="acctMenu"></div>
 
   <!-- first-run setup -->
   <div class="firstrun-wrap" id="firstrunWrap" style="display:none;">
@@ -503,11 +576,14 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
 
     <div class="toolbar">
       <div id="rangeControlSlot"></div>
-      <div class="toolbar-search">
-        <input type="text" id="searchInput" placeholder="Search payee, category, notes" autocomplete="off" oninput="onSearchInput()">
-        <button class="search-clear" id="searchClear" style="display:none;" title="Clear search" onclick="clearSearch()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
-        </button>
+      <div class="toolbar-right">
+        <div class="toolbar-search">
+          <input type="text" id="searchInput" placeholder="Search payee, category, notes" autocomplete="off" oninput="onSearchInput()">
+          <button class="search-clear" id="searchClear" style="display:none;" title="Clear search" onclick="clearSearch()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <button type="button" class="btn" onclick="openExportModal()">Export CSV</button>
       </div>
     </div>
 
@@ -615,6 +691,28 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
           <button class="btn" onclick="closeAccountModal()">Cancel</button>
           <button class="btn primary" onclick="saveAccount()">Save</button>
         </div>
+
+        <div class="am-section">
+          <div class="am-section-title">Backups</div>
+          <div class="am-hint">Backups run automatically when the app opens and closes.</div>
+          <div class="am-backup-row">
+            <span class="mono am-backup-path" id="am-backup-path">Not set</span>
+            <button class="btn" onclick="chooseBackupFolder()">Change folder</button>
+            <button class="btn" id="am-backup-reset-btn" style="display:none;" onclick="resetBackupFolderClick()">Reset to default</button>
+          </div>
+          <div class="am-backup-row">
+            <span class="am-keep-label">Keep last</span>
+            <input id="am-backup-keep" type="number" min="1" max="50" class="mono am-keep-input" onchange="onBackupKeepChange()">
+            <span class="am-keep-label">backups</span>
+          </div>
+          <button type="button" class="btn" onclick="openRestoreList()">Restore from backup</button>
+        </div>
+
+        <div class="am-section" id="am-danger-zone" style="display:none;">
+          <div class="am-section-title danger">Delete account</div>
+          <div class="am-hint">Permanently delete this account and all its transactions. This can't be undone.</div>
+          <button class="btn danger" onclick="openDeleteAccountConfirm()">Delete account&hellip;</button>
+        </div>
       </div>
       <div id="amScreenConfirm" style="display:none;">
         <div class="m-msg" id="am-confirm-msg"></div>
@@ -622,6 +720,73 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
           <button class="btn" onclick="cancelAccountConfirm()">Cancel</button>
           <button class="btn primary" onclick="confirmAccountSave()">Change it</button>
         </div>
+      </div>
+      <div id="amScreenDeleteConfirm" style="display:none;">
+        <div class="m-msg" id="am-delete-msg"></div>
+        <div class="fld">
+          <label>Type the account name to confirm</label>
+          <input id="am-delete-input" autocomplete="off" oninput="onDeleteAccountInput()">
+        </div>
+        <div class="err" id="am-delete-err"></div>
+        <div class="m-foot">
+          <button class="btn" onclick="cancelDeleteAccountConfirm()">Cancel</button>
+          <button class="btn danger" id="am-delete-confirm-btn" disabled onclick="confirmDeleteAccount()">Delete</button>
+        </div>
+      </div>
+      <div id="amScreenRestoreList" style="display:none;">
+        <div class="restore-list" id="restoreList"></div>
+        <div class="err" id="restore-list-err"></div>
+        <div class="m-foot">
+          <button class="btn" onclick="closeRestoreList()">Back</button>
+        </div>
+      </div>
+      <div id="amScreenRestoreConfirm" style="display:none;">
+        <div class="m-msg" id="restore-confirm-msg"></div>
+        <div class="err" id="restore-confirm-err"></div>
+        <div class="m-foot">
+          <button class="btn" onclick="cancelRestoreConfirm()">Cancel</button>
+          <button class="btn danger" onclick="confirmRestore()">Restore</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- add account modal -->
+  <div class="modal-scrim" id="addAcctModalScrim">
+    <div class="modal">
+      <h3>Add account</h3>
+      <div class="fld">
+        <label>Account name</label>
+        <input id="aa-name" value="Checking">
+      </div>
+      <div class="fld-row">
+        <div class="fld">
+          <label>Starting balance</label>
+          <input id="aa-balance" class="mono" placeholder="0.00">
+        </div>
+        <div class="fld">
+          <label>As of date</label>
+          <input id="aa-date" type="date">
+        </div>
+      </div>
+      <div class="err" id="aa-err"></div>
+      <div class="m-foot">
+        <button class="btn" onclick="closeAddAccountModal()">Cancel</button>
+        <button class="btn primary" onclick="createAccountFromModal()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- export CSV modal -->
+  <div class="modal-scrim" id="exportModalScrim">
+    <div class="modal">
+      <h3>Export CSV</h3>
+      <div id="exportRangeSlot"></div>
+      <div class="err" id="export-err"></div>
+      <div class="export-note" id="export-note" style="display:none;"></div>
+      <div class="m-foot">
+        <button class="btn" onclick="closeExportModal()">Cancel</button>
+        <button class="btn primary" id="export-btn" onclick="runExport()">Export</button>
       </div>
     </div>
   </div>
@@ -683,6 +848,12 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
       </label>
     </div>
     <div class="bar-center">
+      <span id="backupNotice" class="backup-notice" style="display:none;">
+        <span id="backupNoticeText"></span>
+        <button type="button" class="notice-dismiss" onclick="dismissBackupNotice()" title="Dismiss">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
+        </button>
+      </span>
       <span id="updateNotice"></span>
     </div>
     <div class="bar-right">
@@ -696,7 +867,8 @@ function $(id){ return document.getElementById(id); }
 function api(){ return window.pywebview && window.pywebview.api; }
 function esc(s){ return (s==null?"":String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-let STATE = { version:"1.0.0", theme:"dark", hasAccount:false, account:null };
+let STATE = { version:"1.0.0", theme:"dark", hasAccount:false, account:null, accounts:[],
+  backupFolder:null, backupFolderIsCustom:false, backupKeep:5 };
 let TX = [];
 let direction = "withdraw";
 let editingId = null;
@@ -719,6 +891,12 @@ let reconUIInit = false;
 let currentView = "register";
 let reconSummary = null;
 let finderOpen = false;
+
+/* ---------- Phase 6: account switcher, CSV export, backups, restore ---------- */
+let accountMenuOpen = false;
+let exportRange = { from:null, to:null };
+let pendingDeleteAccountName = null;
+let RESTORE = { backups: [], preview: null, pendingFilename: null };
 
 /* ---------- money formatting (display only; storage stays integer cents) ---------- */
 function fmtMoney(cents){
@@ -851,19 +1029,24 @@ function attachSuggest(input, getItems, onPick, opts){
 }
 
 /* ---------- shared date-range control (register / reconcile / CSV export) ----------
-   createRangeControl(container, onChange): renders presets + a Custom
+   createRangeControl(container, onChange, opts): renders presets + a Custom
    from/to pair into container, emits {from, to, label} on every change.
-   Presets: from = today minus N days, no upper bound. Custom: both ends. */
-function createRangeControl(container, onChange){
+   Presets: from = today minus N days, no upper bound. Custom: both ends.
+   opts.allowAll (Phase 6, CSV export only) adds an "All history" choice
+   ahead of the presets and makes it the default; it emits {from:null, to:null}. */
+function createRangeControl(container, onChange, opts){
+  opts = opts || {};
   const PRESETS = [
     { key:"7", days:7, label:"Last 7 Days" },
     { key:"14", days:14, label:"Last 14 Days" },
     { key:"30", days:30, label:"Last 30 Days" },
     { key:"90", days:90, label:"Last 90 Days" },
   ];
+  const allOption = opts.allowAll ? `<option value="all">All history</option>` : "";
   container.innerHTML = `
     <div class="range-ctl">
       <select class="range-select">
+        ${allOption}
         ${PRESETS.map(p => `<option value="${p.key}">${esc(p.label)}</option>`).join("")}
         <option value="custom">Custom</option>
       </select>
@@ -880,7 +1063,7 @@ function createRangeControl(container, onChange){
   const customWrap = container.querySelector(".range-custom");
   const fromInput = container.querySelector(".range-from");
   const toInput = container.querySelector(".range-to");
-  sel.value = "30";
+  sel.value = opts.allowAll ? "all" : "30";
 
   function emit(){
     if (sel.value === "custom"){
@@ -888,6 +1071,8 @@ function createRangeControl(container, onChange){
       const to = toInput.value;
       if (!from || !to) return;
       onChange({ from, to, label: `${from} to ${to}` });
+    } else if (sel.value === "all"){
+      onChange({ from: null, to: null, label: "All history" });
     } else {
       const preset = PRESETS.find(p => p.key === sel.value);
       onChange({ from: isoMinusDays(preset.days), to: null, label: preset.label });
@@ -911,7 +1096,7 @@ function createRangeControl(container, onChange){
     emit();
   });
 
-  emit(); // fire the default (Last 30 Days) immediately
+  emit(); // fire the default immediately (All history when allowed, else Last 30 Days)
 }
 
 /* ---------- theme ---------- */
@@ -923,6 +1108,23 @@ async function toggleTheme(){
   const next = STATE.theme === "light" ? "dark" : "light";
   applyTheme(next);
   if (api()) await api().save_theme(next);
+}
+
+/* ---------- Phase 6: shared config apply + post-switch refresh ---------- */
+function applyConfig(cfg){
+  STATE.hasAccount = cfg.has_account;
+  STATE.account = cfg.account;
+  STATE.accounts = cfg.accounts || [];
+  STATE.backupFolder = cfg.backup_folder || null;
+  STATE.backupFolderIsCustom = !!cfg.backup_folder_is_custom;
+  STATE.backupKeep = cfg.backup_keep || 5;
+}
+async function refreshForActiveAccount(){
+  if (editingId) cancelEdit();
+  renderHeader();
+  const tasks = [refreshPayees()];
+  tasks.push(currentView === "reconcile" ? loadReconcile() : loadRegister());
+  await Promise.all(tasks);
 }
 
 /* ---------- header / balance ---------- */
@@ -1400,7 +1602,11 @@ function openAccountModal(){
   } else {
     note.style.display = "none";
   }
+  renderBackupSection();
+  $("am-danger-zone").style.display = (STATE.accounts && STATE.accounts.length > 1) ? "block" : "none";
   cancelAccountConfirm();
+  cancelDeleteAccountConfirm();
+  resetRestoreScreens();
   $("acctModalScrim").classList.add("open");
 }
 function closeAccountModal(){
@@ -1458,10 +1664,321 @@ async function doAccountSave(){
     errEl.textContent = (r && r.error) || "Something went wrong.";
     return;
   }
-  STATE.account = r.account;
+  applyConfig(r);
   closeAccountModal();
   renderHeader();
   await loadRegister();
+}
+
+/* ---------- Phase 6: account switcher ---------- */
+function toggleAccountMenu(){
+  if (accountMenuOpen) closeAccountMenu();
+  else openAccountMenu();
+}
+function openAccountMenu(){
+  if (!STATE.accounts || !STATE.accounts.length) return;
+  const menu = $("acctMenu");
+  const items = STATE.accounts.map(a => {
+    const isActive = STATE.account && a.id === STATE.account.id;
+    return `<div class="acct-menu-item" data-id="${a.id}" onclick="pickAccount(${a.id})">
+      <span class="acct-menu-check">${isActive ? "&#10003;" : ""}</span>
+      <span>${esc(a.name)}</span>
+    </div>`;
+  }).join("");
+  menu.innerHTML = items +
+    `<div class="acct-menu-sep"></div>
+     <div class="acct-menu-item acct-menu-add" onclick="openAddAccountModal()">+ Add account</div>`;
+  const trigger = $("acctTrigger");
+  const r = trigger.getBoundingClientRect();
+  menu.style.left = r.left + "px";
+  menu.style.top = (r.bottom + 6) + "px";
+  menu.classList.add("open");
+  trigger.classList.add("open");
+  accountMenuOpen = true;
+}
+function closeAccountMenu(){
+  if (!accountMenuOpen) return;
+  accountMenuOpen = false;
+  $("acctMenu").classList.remove("open");
+  $("acctTrigger").classList.remove("open");
+}
+document.addEventListener("mousedown", (e) => {
+  if (!accountMenuOpen) return;
+  if (e.target.closest("#acctMenu") || e.target.closest("#acctTrigger")) return;
+  closeAccountMenu();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && accountMenuOpen) closeAccountMenu();
+});
+async function pickAccount(id){
+  closeAccountMenu();
+  if (!api() || (STATE.account && id === STATE.account.id)) return;
+  const r = await api().set_active_account(id);
+  if (!r || !r.ok) return;
+  applyConfig(r);
+  await refreshForActiveAccount();
+}
+
+/* ---------- Phase 6: add account modal ---------- */
+function openAddAccountModal(){
+  closeAccountMenu();
+  $("aa-name").value = "Checking";
+  $("aa-balance").value = "";
+  $("aa-date").value = todayIso();
+  $("aa-err").textContent = "";
+  $("addAcctModalScrim").classList.add("open");
+}
+function closeAddAccountModal(){
+  $("addAcctModalScrim").classList.remove("open");
+}
+async function createAccountFromModal(){
+  const errEl = $("aa-err");
+  errEl.textContent = "";
+  const name = $("aa-name").value.trim();
+  const balance = $("aa-balance").value.trim();
+  const date = $("aa-date").value;
+  if (!date){ errEl.textContent = "Date is required."; return; }
+  if (!api()) return;
+  const r = await api().create_account(name, balance, date);
+  if (!r || !r.ok){
+    errEl.textContent = (r && r.error) || "Something went wrong.";
+    return;
+  }
+  applyConfig(r);
+  closeAddAccountModal();
+  await refreshForActiveAccount();
+}
+
+/* ---------- Phase 6: account settings modal, backups section ---------- */
+function renderBackupSection(){
+  $("am-backup-path").textContent = STATE.backupFolder || "Not set";
+  $("am-backup-path").title = STATE.backupFolder || "";
+  $("am-backup-reset-btn").style.display = STATE.backupFolderIsCustom ? "inline-block" : "none";
+  $("am-backup-keep").value = STATE.backupKeep || 5;
+}
+async function chooseBackupFolder(){
+  if (!api()) return;
+  const r = await api().choose_backup_folder();
+  if (!r || !r.ok){
+    $("am-err").textContent = (r && r.error) || "Couldn't set the backup folder.";
+    return;
+  }
+  if (r.cancelled) return;
+  STATE.backupFolder = r.backup_folder;
+  STATE.backupFolderIsCustom = !!r.backup_folder_is_custom;
+  renderBackupSection();
+}
+async function resetBackupFolderClick(){
+  if (!api()) return;
+  const r = await api().reset_backup_folder();
+  if (!r || !r.ok) return;
+  STATE.backupFolder = r.backup_folder;
+  STATE.backupFolderIsCustom = !!r.backup_folder_is_custom;
+  renderBackupSection();
+}
+async function onBackupKeepChange(){
+  if (!api()) return;
+  let n = parseInt($("am-backup-keep").value, 10);
+  if (!Number.isFinite(n)) n = STATE.backupKeep || 5;
+  const r = await api().set_backup_keep(n);
+  if (r && r.ok){
+    STATE.backupKeep = r.backup_keep;
+  }
+  $("am-backup-keep").value = STATE.backupKeep;
+}
+
+/* ---------- Phase 6: restore from backup ---------- */
+function resetRestoreScreens(){
+  $("amScreenRestoreList").style.display = "none";
+  $("amScreenRestoreConfirm").style.display = "none";
+  $("amScreenEdit").style.display = "block";
+  RESTORE.preview = null;
+  RESTORE.pendingFilename = null;
+}
+function formatBackupDate(iso){
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleString([], { year:"numeric", month:"long", day:"numeric", hour:"numeric", minute:"2-digit" });
+}
+function openRestoreList(){
+  RESTORE.preview = null;
+  RESTORE.pendingFilename = null;
+  $("amScreenEdit").style.display = "none";
+  $("amScreenRestoreList").style.display = "block";
+  loadRestoreList();
+}
+function closeRestoreList(){
+  $("amScreenRestoreList").style.display = "none";
+  $("amScreenEdit").style.display = "block";
+}
+async function loadRestoreList(){
+  const errEl = $("restore-list-err");
+  errEl.textContent = "";
+  if (!api()) return;
+  const r = await api().list_backups();
+  if (!r || !r.ok){
+    errEl.textContent = (r && r.error) || "Couldn't list backups.";
+    RESTORE.backups = [];
+    renderRestoreList();
+    return;
+  }
+  RESTORE.backups = r.backups;
+  renderRestoreList();
+}
+function renderRestoreList(){
+  const list = $("restoreList");
+  if (!RESTORE.backups.length){
+    list.innerHTML = `<div class="restore-empty">No backups found yet.</div>`;
+    return;
+  }
+  list.innerHTML = RESTORE.backups.map(b => {
+    const dateStr = formatBackupDate(b.timestamp);
+    const tag = b.is_prerestore ? `<span class="restore-row-tag">(pre-restore)</span>` : "";
+    return `<div class="restore-row" onclick="previewRestoreClick('${b.filename}')">
+      <span class="restore-row-date">${esc(dateStr)}</span>
+      ${tag}
+    </div>`;
+  }).join("");
+}
+async function previewRestoreClick(filename){
+  const errEl = $("restore-list-err");
+  errEl.textContent = "";
+  if (!api()) return;
+  const r = await api().preview_restore(filename);
+  if (!r || !r.ok){
+    errEl.textContent = (r && r.error) || "Couldn't read that backup.";
+    return;
+  }
+  RESTORE.preview = r;
+  RESTORE.pendingFilename = filename;
+  $("restore-confirm-msg").innerHTML = buildRestoreConfirmHtml(r);
+  $("restore-confirm-err").textContent = "";
+  $("amScreenRestoreList").style.display = "none";
+  $("amScreenRestoreConfirm").style.display = "block";
+}
+function buildRestoreConfirmHtml(preview){
+  const dateStr = formatBackupDate(preview.timestamp);
+  const lines = preview.accounts.map(a => {
+    const name = `<strong>${esc(a.name)}</strong>`;
+    if (a.kind === "same"){
+      return `${name}: no differences.`;
+    }
+    if (a.kind === "only_live"){
+      const txWord = a.count === 1 ? "transaction" : "transactions";
+      return `${name}: this account doesn't exist in the backup and will be removed entirely (${a.count} ${txWord}).`;
+    }
+    if (a.kind === "only_backup"){
+      const txWord = a.count === 1 ? "transaction" : "transactions";
+      return `${name}: this account will come back (${a.count} ${txWord}).`;
+    }
+    const parts = [];
+    if (a.added_or_changed > 0){
+      const w = a.added_or_changed === 1 ? "transaction" : "transactions";
+      parts.push(`${a.added_or_changed} ${w} added or changed since this backup will be lost.`);
+    }
+    if (a.deleted > 0){
+      const w = a.deleted === 1 ? "transaction" : "transactions";
+      parts.push(`${a.deleted} ${w} deleted since this backup will come back.`);
+    }
+    return `${name}: ${parts.join(" ")}`;
+  });
+  return `<strong>Restore the backup from ${esc(dateStr)}?</strong>` +
+    `<span class="m-detail">Compared to your current register:<br>${lines.join("<br>")}</span>` +
+    `<span class="m-detail">Your current register will be backed up first, so this can be undone.</span>`;
+}
+function cancelRestoreConfirm(){
+  $("amScreenRestoreConfirm").style.display = "none";
+  $("amScreenRestoreList").style.display = "block";
+}
+async function confirmRestore(){
+  if (!RESTORE.pendingFilename || !api()) return;
+  const errEl = $("restore-confirm-err");
+  errEl.textContent = "";
+  const r = await api().restore_backup(RESTORE.pendingFilename);
+  if (!r || !r.ok){
+    errEl.textContent = (r && r.error) || "Couldn't restore that backup.";
+    return;
+  }
+  applyConfig(r);
+  closeAccountModal();
+  await Promise.all([refreshForActiveAccount(), refreshCategories()]);
+}
+
+/* ---------- Phase 6: account settings modal, delete account ---------- */
+function openDeleteAccountConfirm(){
+  if (!STATE.account) return;
+  pendingDeleteAccountName = STATE.account.name;
+  const count = STATE.account.transaction_count || 0;
+  const txWord = count === 1 ? "transaction" : "transactions";
+  $("am-delete-msg").innerHTML =
+    `Delete <strong>${esc(STATE.account.name)}</strong> and its ${count} ${txWord}? This can't be undone.` +
+    `<span class="m-detail">Type the account name below to confirm.</span>`;
+  $("am-delete-input").value = "";
+  $("am-delete-err").textContent = "";
+  $("am-delete-confirm-btn").disabled = true;
+  $("amScreenEdit").style.display = "none";
+  $("amScreenDeleteConfirm").style.display = "block";
+  $("am-delete-input").focus();
+}
+function cancelDeleteAccountConfirm(){
+  $("amScreenDeleteConfirm").style.display = "none";
+  $("amScreenEdit").style.display = "block";
+  pendingDeleteAccountName = null;
+}
+function onDeleteAccountInput(){
+  const typed = $("am-delete-input").value;
+  $("am-delete-confirm-btn").disabled = typed !== pendingDeleteAccountName;
+}
+async function confirmDeleteAccount(){
+  if (!STATE.account || !api()) return;
+  const typed = $("am-delete-input").value;
+  if (typed !== pendingDeleteAccountName) return;
+  const r = await api().delete_account(STATE.account.id);
+  if (!r || !r.ok){
+    $("am-delete-err").textContent = (r && r.error) || "Couldn't delete the account.";
+    return;
+  }
+  applyConfig(r);
+  closeAccountModal();
+  await refreshForActiveAccount();
+}
+
+/* ---------- Phase 6: export CSV modal ---------- */
+function openExportModal(){
+  $("export-err").textContent = "";
+  const note = $("export-note");
+  note.style.display = "none";
+  note.textContent = "";
+  $("export-btn").disabled = false;
+  $("export-btn").textContent = "Export";
+  createRangeControl($("exportRangeSlot"), (range) => {
+    exportRange = { from: range.from, to: range.to };
+  }, { allowAll: true });
+  $("exportModalScrim").classList.add("open");
+}
+function closeExportModal(){
+  $("exportModalScrim").classList.remove("open");
+}
+async function runExport(){
+  const errEl = $("export-err");
+  errEl.textContent = "";
+  if (!api() || !STATE.account) return;
+  const btn = $("export-btn");
+  btn.disabled = true;
+  const r = await api().export_csv(STATE.account.id, exportRange.from, exportRange.to);
+  btn.disabled = false;
+  if (!r || !r.ok){
+    errEl.textContent = (r && r.error) || "Something went wrong.";
+    return;
+  }
+  if (r.cancelled){
+    closeExportModal();
+    return;
+  }
+  const note = $("export-note");
+  note.textContent = `Exported ${r.count} transaction${r.count === 1 ? "" : "s"}.`;
+  note.style.display = "block";
+  setTimeout(closeExportModal, 1200);
 }
 
 /* ---------- first run ---------- */
@@ -1478,8 +1995,7 @@ async function createAccount(){
     errEl.textContent = (r && r.error) || "Something went wrong.";
     return;
   }
-  STATE.hasAccount = true;
-  STATE.account = r.account;
+  applyConfig(r);
   showRegisterView();
   await Promise.all([loadRegister(), refreshCategories(), refreshPayees()]);
 }
@@ -1665,6 +2181,15 @@ async function deleteCategoryNow(id, reassignTo){
 function openUrl(u){ if (api()) api().open_url(u); }
 async function onDebugToggle(on){ if (api()) await api().set_debug(on); }
 
+/* ---------- Phase 6: backup notice (bottom bar, dismissible for the session) ---------- */
+function showBackupNotice(text){
+  $("backupNoticeText").textContent = text;
+  $("backupNotice").style.display = "inline-flex";
+}
+function dismissBackupNotice(){
+  $("backupNotice").style.display = "none";
+}
+
 /* ---------- update check ---------- */
 function fadeNotice(){
   const notice = $("updateNotice");
@@ -1707,10 +2232,12 @@ async function boot(){
   const cfg = await api().get_config();
   if (!cfg || !cfg.ok) return;
   STATE.version = cfg.version;
-  STATE.hasAccount = cfg.has_account;
-  STATE.account = cfg.account;
+  applyConfig(cfg);
   applyTheme(cfg.theme || "dark");
   $("verLabel").textContent = "v" + (STATE.version || "1.0.0");
+  if (cfg.backup_notice){
+    showBackupNotice(cfg.backup_notice);
+  }
 
   initRegisterUI();
   initReconcileUI();
