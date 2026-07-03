@@ -412,7 +412,7 @@ class Api:
             prefs = load_prefs()
             prefs["active_account_id"] = new_id
             save_prefs(prefs)
-            self.log(f"Account created: {name_s!r} starting {cents}c as of {date_s}")
+            self.log(f"Account {new_id} created, starting as of {date_s}")
             return self.get_config()
         except Exception as e:
             self.log(f"create_account failed: {e}")
@@ -427,7 +427,7 @@ class Api:
             prefs = load_prefs()
             prefs["active_account_id"] = account["id"]
             save_prefs(prefs)
-            self.log(f"Active account set to {account['id']} ({account['name']!r})")
+            self.log(f"Active account set to {account['id']}")
             return self.get_config()
         except Exception as e:
             self.log(f"set_active_account failed: {e}")
@@ -459,7 +459,7 @@ class Api:
                 ).fetchone()
                 prefs["active_account_id"] = remaining["id"] if remaining else None
                 save_prefs(prefs)
-            self.log(f"Account deleted: {account['name']!r} ({tx_count} transactions removed)")
+            self.log(f"Account {account['id']} deleted ({tx_count} transactions removed)")
             return self.get_config()
         except Exception as e:
             self.log(f"delete_account failed: {e}")
@@ -496,7 +496,7 @@ class Api:
                     (name_s, cents, date_s, account["id"]),
                 )
             self._conn.commit()
-            self.log(f"Account {account['id']} updated: {name_s!r} starting {cents}c as of {date_s}")
+            self.log(f"Account {account['id']} updated, starting as of {date_s}")
             return self.get_config()
         except Exception as e:
             self.log(f"update_account failed: {e}")
@@ -528,7 +528,7 @@ class Api:
             cur = self._conn.cursor()
             cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (name_s,))
             self._conn.commit()
-            self.log(f"Category added: {name_s!r}")
+            self.log("Category added")
             return self.get_categories()
         except Exception as e:
             self.log(f"add_category failed: {e}")
@@ -558,7 +558,7 @@ class Api:
                 )
                 cur.execute("DELETE FROM categories WHERE id=?", (category_id,))
                 self._conn.commit()
-                self.log(f"Category {old_name!r} merged into {merge_target['name']!r}")
+                self.log(f"Category {category_id} merged into category {merge_target['id']}")
                 return self.get_categories()
             cur.execute("UPDATE categories SET name=? WHERE id=?", (new_name_s, category_id))
             cur.execute(
@@ -566,7 +566,7 @@ class Api:
                 (new_name_s, old_name),
             )
             self._conn.commit()
-            self.log(f"Category {old_name!r} renamed to {new_name_s!r}")
+            self.log(f"Category {category_id} renamed")
             return self.get_categories()
         except Exception as e:
             self.log(f"rename_category failed: {e}")
@@ -589,8 +589,8 @@ class Api:
                 )
             cur.execute("DELETE FROM categories WHERE id=?", (category_id,))
             self._conn.commit()
-            detail = f" (reassigned to {reassign_s!r})" if reassign_s else ""
-            self.log(f"Category deleted: {old_name!r}{detail}")
+            detail = " (transactions reassigned)" if reassign_s else ""
+            self.log(f"Category {category_id} deleted{detail}")
             return self.get_categories()
         except Exception as e:
             self.log(f"delete_category failed: {e}")
@@ -728,7 +728,7 @@ class Api:
             if category_s:
                 cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
             self._conn.commit()
-            self.log(f"Added transaction: {date_s} {payee_s!r} {signed}c")
+            self.log(f"Added transaction dated {date_s}")
             return {"ok": True}
         except Exception as e:
             self.log(f"add_transaction failed: {e}")
@@ -762,7 +762,7 @@ class Api:
             if category_s:
                 cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
             self._conn.commit()
-            self.log(f"Updated transaction {transaction_id}: {date_s} {payee_s!r} {signed}c")
+            self.log(f"Updated transaction {transaction_id}, dated {date_s}")
             return {"ok": True}
         except Exception as e:
             self.log(f"update_transaction failed: {e}")
@@ -858,7 +858,7 @@ class Api:
             if category_s:
                 cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
             self._conn.commit()
-            self.log(f"Added autopay: {payee_s!r} {signed}c, next post {post_s}, next pay {pay_s}")
+            self.log(f"Added autopay, next post {post_s}, next pay {pay_s}")
             return self.get_autopays(account["id"])
         except Exception as e:
             self.log(f"add_autopay failed: {e}")
@@ -901,7 +901,7 @@ class Api:
             if category_s:
                 cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
             self._conn.commit()
-            self.log(f"Updated autopay {autopay_id}: {payee_s!r} {signed}c, next post {post_s}, next pay {pay_s}")
+            self.log(f"Updated autopay {autopay_id}, next post {post_s}, next pay {pay_s}")
             return self.get_autopays(row["account_id"])
         except Exception as e:
             self.log(f"update_autopay failed: {e}")
@@ -947,7 +947,7 @@ class Api:
                     iterations += 1
                     if iterations > 120:
                         self.log(
-                            f"post_due_autopays: autopay {rule['id']} ({rule['payee']!r}) "
+                            f"post_due_autopays: autopay {rule['id']} "
                             f"hit the 120-iteration safety cap; stopping this rule for now."
                         )
                         break
@@ -1188,7 +1188,7 @@ class Api:
                 combinations = found[:10]
 
             self.log(
-                f"find_discrepancy {diff_cents}c: unchecked_match={unchecked_match is not None} "
+                f"find_discrepancy: unchecked_match={unchecked_match is not None} "
                 f"exact={len(exact)} half={len(half)} transposition_hint={transposition_hint} "
                 f"combinations={len(combinations)} combinations_skipped={combinations_skipped}"
             )
@@ -1554,6 +1554,9 @@ class Api:
         return {"ok": True}
 
     def log(self, msg: str):
+        # Privacy rule for every call site: users share this log for bug
+        # reports, so lines may carry ids, dates, counts, and paths, never
+        # payees, amounts, balances, or user-entered names.
         if not self._debug or not self._debug_path:
             return
         try:
