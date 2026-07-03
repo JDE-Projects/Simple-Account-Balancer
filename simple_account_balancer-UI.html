@@ -107,11 +107,17 @@ header {
 }
 .gear-btn:hover { border-color:var(--accent); color:var(--accent); }
 .gear-btn svg { width:14px; height:14px; }
+.balance-caption {
+  font-size:10px; font-weight:600; letter-spacing:.4px; text-transform:uppercase;
+  color:var(--text-faint); margin-top:4px;
+}
 .balance-big {
   font-family:"Sora", sans-serif; font-weight:700; font-size:44px; line-height:1.1;
   color:var(--accent); letter-spacing:.2px; margin-top:2px;
 }
 .balance-big.neg { color:var(--red); }
+.balance-upcoming { font-size:13.5px; color:var(--text-dim); margin-top:2px; }
+.balance-upcoming .amt-upcoming.neg { color:var(--red); }
 
 .head-right { display:flex; align-items:flex-start; flex:0 0 auto; }
 .theme-btn {
@@ -244,6 +250,8 @@ table.register tbody td {
   vertical-align:middle;
 }
 table.register tbody tr:hover { background:color-mix(in srgb, var(--accent) 5%, transparent); }
+table.register tbody tr.future { opacity:.55; }
+table.register tbody tr.future:hover { opacity:.9; }
 .col-date { white-space:nowrap; font-family:"JetBrains Mono", monospace; font-size:12px; color:var(--text-dim); }
 .col-payee { max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .col-category, .col-notes { color:var(--text-dim); max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -455,6 +463,15 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
 .backup-notice .notice-dismiss:hover { opacity:1; background:color-mix(in srgb, var(--amber) 15%, transparent); }
 .backup-notice .notice-dismiss svg { width:11px; height:11px; }
 
+.autopay-notice { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:var(--accent); }
+.autopay-notice .notice-dismiss {
+  width:16px; height:16px; border:none; background:transparent; color:var(--accent);
+  cursor:pointer; border-radius:4px; display:flex; align-items:center; justify-content:center;
+  opacity:.75; transition:.15s; padding:0;
+}
+.autopay-notice .notice-dismiss:hover { opacity:1; background:color-mix(in srgb, var(--accent) 15%, transparent); }
+.autopay-notice .notice-dismiss svg { width:11px; height:11px; }
+
 .dbg-toggle { display:inline-flex; align-items:center; gap:7px; cursor:pointer; user-select:none; }
 .dbg-toggle input { position:absolute; opacity:0; pointer-events:none; }
 .dbg-track { width:32px; height:17px; border-radius:999px; background:var(--panel-2); border:1px solid var(--border-2); position:relative; transition:all .14s; }
@@ -498,7 +515,9 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
           </svg>
         </button>
       </div>
+      <div class="balance-caption">Today's balance</div>
       <div class="balance-big" id="balanceBig">$0.00</div>
+      <div class="balance-upcoming" id="balanceUpcoming" style="display:none;">After upcoming: <span class="amt-upcoming" id="balanceUpcomingAmt"></span></div>
     </div>
     <div class="head-right">
       <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle theme">
@@ -854,6 +873,12 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
         </button>
       </span>
+      <span id="autopayNotice" class="autopay-notice" style="display:none;">
+        <span id="autopayNoticeText"></span>
+        <button type="button" class="notice-dismiss" onclick="dismissAutopayNotice()" title="Dismiss">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
+        </button>
+      </span>
       <span id="updateNotice"></span>
     </div>
     <div class="bar-right">
@@ -1131,10 +1156,21 @@ async function refreshForActiveAccount(){
 function renderHeader(){
   if (!STATE.account) return;
   $("acctName").textContent = STATE.account.name;
-  const bal = STATE.account.current_balance_cents;
+  const todayBal = STATE.account.today_balance_cents;
+  const fullBal = STATE.account.current_balance_cents;
   const balEl = $("balanceBig");
-  balEl.textContent = fmtMoney(bal);
-  balEl.classList.toggle("neg", bal < 0);
+  balEl.textContent = fmtMoney(todayBal);
+  balEl.classList.toggle("neg", todayBal < 0);
+
+  const upcomingEl = $("balanceUpcoming");
+  if (todayBal !== fullBal){
+    const amtEl = $("balanceUpcomingAmt");
+    amtEl.textContent = fmtMoney(fullBal);
+    amtEl.classList.toggle("neg", fullBal < 0);
+    upcomingEl.style.display = "block";
+  } else {
+    upcomingEl.style.display = "none";
+  }
 }
 
 /* ---------- entry form ---------- */
@@ -1241,7 +1277,8 @@ function rowHtml(row){
   const depositCell = row.amount_cents > 0
     ? `<span class="amt deposit-amt">${esc(fmtMoney(row.amount_cents))}</span>` : "";
   const balCls = row.balance_cents < 0 ? "amt balance-amt neg" : "amt balance-amt";
-  return `<tr data-id="${row.id}">
+  const trCls = row.date > todayIso() ? "future" : "";
+  return `<tr data-id="${row.id}" class="${trCls}">
     <td class="col-date">${esc(row.date)}</td>
     <td class="col-payee" title="${esc(row.payee)}">${esc(row.payee)}</td>
     <td class="col-category" title="${esc(row.category)}">${esc(row.category)}</td>
@@ -1295,6 +1332,7 @@ async function loadRegister(){
   if (!r || !r.ok) return;
   TX = r.rows;
   STATE.account.current_balance_cents = r.current_balance_cents;
+  STATE.account.today_balance_cents = r.today_balance_cents;
   STATE.account.transaction_count = r.transaction_count;
   renderHeader();
   renderRegister();
@@ -1411,7 +1449,8 @@ function reconRowHtml(row){
     ? `<span class="amt withdraw-amt">${esc(fmtMoney(Math.abs(row.amount_cents)))}</span>` : "";
   const depositCell = row.amount_cents > 0
     ? `<span class="amt deposit-amt">${esc(fmtMoney(row.amount_cents))}</span>` : "";
-  return `<tr data-id="${row.id}">
+  const trCls = row.date > todayIso() ? "future" : "";
+  return `<tr data-id="${row.id}" class="${trCls}">
     <td class="col-cleared"><label class="recon-check-wrap">
       <input type="checkbox" class="recon-check" ${row.cleared ? "checked" : ""}
              onchange="onReconCheckboxChange(${row.id}, this.checked)">
@@ -2190,6 +2229,15 @@ function dismissBackupNotice(){
   $("backupNotice").style.display = "none";
 }
 
+/* ---------- autopay launch notice (bottom bar, dismissible for the session) ---------- */
+function showAutopayNotice(text){
+  $("autopayNoticeText").textContent = text;
+  $("autopayNotice").style.display = "inline-flex";
+}
+function dismissAutopayNotice(){
+  $("autopayNotice").style.display = "none";
+}
+
 /* ---------- update check ---------- */
 function fadeNotice(){
   const notice = $("updateNotice");
@@ -2237,6 +2285,9 @@ async function boot(){
   $("verLabel").textContent = "v" + (STATE.version || "1.0.0");
   if (cfg.backup_notice){
     showBackupNotice(cfg.backup_notice);
+  }
+  if (cfg.autopay_notice){
+    showAutopayNotice(cfg.autopay_notice);
   }
 
   initRegisterUI();
