@@ -52,6 +52,14 @@ body.light {
 }
 .mono { font-family:"JetBrains Mono", ui-monospace, monospace; }
 
+/* ---- themed scrollbars (Qt WebEngine is Chromium, so WebKit pseudo-elements apply app-wide) ---- */
+*::-webkit-scrollbar { width:10px; height:10px; }
+*::-webkit-scrollbar-track { background:transparent; }
+*::-webkit-scrollbar-thumb { background:var(--border-2); border-radius:999px; border:2px solid transparent; background-clip:padding-box; }
+*::-webkit-scrollbar-thumb:hover { background:var(--text-faint); background-clip:padding-box; }
+*::-webkit-scrollbar-button { display:none; height:0; width:0; }
+*::-webkit-scrollbar-corner { background:transparent; }
+
 /* ---- header ---- */
 header {
   display:flex; align-items:flex-start; justify-content:space-between;
@@ -197,7 +205,7 @@ button.btn:disabled { opacity:.45; cursor:default; transform:none; }
 .search-clear svg { width:12px; height:12px; }
 
 /* ---- register ---- */
-.table-wrap { flex:1; overflow:auto; padding:0 24px 60px; min-height:0; }
+.table-wrap { flex:1; overflow:auto; padding:0 24px 18px; min-height:0; }
 table.register { width:100%; border-collapse:collapse; }
 table.register thead th {
   position:sticky; top:0; z-index:2; background:var(--bg-2);
@@ -229,6 +237,80 @@ table.register tbody tr:hover .row-actions { opacity:1; }
 .icon-btn svg { width:14px; height:14px; }
 
 .empty-hint { padding:40px 24px; text-align:center; color:var(--text-faint); font-size:13.5px; }
+
+/* ---- view tabs (register / reconcile) ---- */
+.tabs-wrap { padding:0 24px 10px; flex:0 0 auto; }
+.view-tabs { display:inline-flex; border:1px solid var(--border-2); border-radius:var(--radius-sm); overflow:hidden; background:var(--panel-2); }
+.view-tabs button {
+  font-family:"Sora", sans-serif; font-size:12px; font-weight:600; padding:7px 16px;
+  border:none; background:transparent; color:var(--text-dim); cursor:pointer; transition:.15s;
+}
+.view-tabs button + button { border-left:1px solid var(--border-2); }
+.view-tabs button:hover:not(.active) { color:var(--text); }
+.view-tabs button.active { background:color-mix(in srgb, var(--accent) 18%, var(--panel-2)); color:var(--accent); }
+
+/* ---- reconcile ---- */
+.recon-summary {
+  display:flex; align-items:center; gap:30px; flex-wrap:wrap;
+  background:linear-gradient(180deg, var(--panel), var(--bg-2));
+  border:1px solid var(--border); border-radius:var(--radius); padding:14px 18px;
+}
+.recon-stat { display:flex; flex-direction:column; gap:4px; }
+.recon-stat label { font-size:10px; font-weight:600; letter-spacing:.4px; text-transform:uppercase; color:var(--text-faint); }
+.recon-amt { font-family:"JetBrains Mono", monospace; font-size:17px; font-weight:500; color:var(--text); }
+.recon-amt.neg { color:var(--red); }
+.recon-amt.zero { color:var(--green); }
+.recon-hint { margin-top:10px; font-size:11.5px; color:var(--text-faint); }
+.col-cleared { width:36px; text-align:center; }
+td.col-cleared { padding:0; }
+.recon-check-wrap { display:flex; align-items:center; justify-content:center; height:100%; padding:8px 10px; cursor:pointer; }
+.recon-check { accent-color:var(--accent); cursor:pointer; width:15px; height:15px; }
+
+@keyframes reconFlash {
+  0% { background:color-mix(in srgb, var(--accent) 35%, transparent); }
+  100% { background:transparent; }
+}
+table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
+
+/* ---- discrepancy finder ---- */
+.finder-panel {
+  margin-top:14px;
+  background:linear-gradient(180deg, var(--panel), var(--bg-2));
+  border:1px solid var(--border); border-radius:var(--radius); overflow:hidden;
+}
+.finder-toggle {
+  width:100%; display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding:9px 14px; background:transparent; border:none; cursor:pointer;
+  font-family:"Sora", sans-serif; font-size:12.5px; font-weight:600; color:var(--text); transition:.15s;
+}
+.finder-toggle:hover { color:var(--accent); }
+.finder-chevron { width:14px; height:14px; color:var(--text-faint); transition:transform .15s; flex:0 0 auto; }
+.finder-panel.open .finder-chevron { transform:rotate(180deg); }
+.finder-body { padding:0 14px 14px; border-top:1px solid var(--border); }
+.finder-row { display:flex; gap:8px; padding-top:14px; }
+.finder-row input {
+  flex:1; font-family:"JetBrains Mono", monospace; font-size:13px; color:var(--text);
+  background:var(--panel-2); border:1px solid var(--border-2); border-radius:var(--radius-sm);
+  padding:7px 9px; outline:none; transition:.15s;
+}
+.finder-row input:focus { border-color:var(--accent); }
+.finder-group { margin-top:16px; }
+.finder-group h4 { margin:0 0 4px; font-size:10.5px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--text-faint); }
+.finder-hint { font-size:11.5px; color:var(--text-faint); line-height:1.5; margin-bottom:8px; }
+.finder-combo { display:flex; flex-direction:column; gap:2px; padding:6px; border:1px solid var(--border); border-radius:var(--radius-sm); margin-bottom:8px; }
+.finder-tx-row {
+  display:flex; align-items:center; gap:10px; padding:6px 8px; border-radius:var(--radius-sm);
+  cursor:pointer; transition:.15s;
+}
+.finder-tx-row:hover { background:color-mix(in srgb, var(--accent) 8%, transparent); }
+.finder-tx-cleared {
+  flex:0 0 auto; width:14px; text-align:center; font-size:11px; line-height:1;
+}
+.finder-tx-cleared.is-cleared { color:var(--green); }
+.finder-tx-cleared.not-cleared { color:var(--text-faint); }
+.finder-tx-date { font-family:"JetBrains Mono", monospace; font-size:11.5px; color:var(--text-dim); white-space:nowrap; }
+.finder-tx-payee { flex:1; font-size:12.5px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.finder-tx-amt { font-family:"JetBrains Mono", monospace; font-size:12.5px; color:var(--text); white-space:nowrap; }
 
 /* ---- first-run card ---- */
 .firstrun-wrap { flex:1; display:flex; align-items:center; justify-content:center; padding:24px; overflow:auto; }
@@ -298,7 +380,7 @@ table.register tbody tr:hover .row-actions { opacity:1; }
 
 /* ---- bottom bar ---- */
 .bottom-bar {
-  position:fixed; left:0; right:0; bottom:0; height:44px; z-index:50;
+  flex:0 0 auto; height:44px;
   background:var(--bg-2); border-top:1px solid var(--border);
   display:flex; align-items:center; justify-content:space-between; padding:0 18px;
 }
@@ -386,6 +468,14 @@ table.register tbody tr:hover .row-actions { opacity:1; }
     </div>
   </div>
 
+  <!-- register / reconcile tab strip -->
+  <div class="tabs-wrap" id="viewTabs" style="display:none;">
+    <div class="view-tabs">
+      <button type="button" class="active" id="tabRegisterBtn" onclick="switchView('register')">Register</button>
+      <button type="button" id="tabReconcileBtn" onclick="switchView('reconcile')">Reconcile</button>
+    </div>
+  </div>
+
   <!-- register view -->
   <div id="registerWrap" style="display:none; flex:1; min-height:0; flex-direction:column;">
     <div class="entry-wrap">
@@ -438,6 +528,65 @@ table.register tbody tr:hover .row-actions { opacity:1; }
         <tbody id="registerBody"></tbody>
       </table>
       <div class="empty-hint" id="emptyHint" style="display:none;">No transactions in this range.</div>
+    </div>
+  </div>
+
+  <!-- reconcile view -->
+  <div id="reconcileWrap" style="display:none; flex:1; min-height:0; flex-direction:column;">
+    <div class="toolbar">
+      <div id="reconRangeSlot"></div>
+    </div>
+
+    <div class="entry-wrap">
+      <div class="recon-summary">
+        <div class="recon-stat">
+          <label>Cleared balance</label>
+          <span class="recon-amt" id="reconClearedAmt">$0.00</span>
+        </div>
+        <div class="recon-stat">
+          <label>Register balance</label>
+          <span class="recon-amt" id="reconRegisterAmt">$0.00</span>
+        </div>
+        <div class="recon-stat">
+          <label>Difference</label>
+          <span class="recon-amt" id="reconDiffAmt">$0.00</span>
+        </div>
+      </div>
+      <div class="recon-hint">Check off transactions as they appear on your bank statement. Cleared status never changes your balance.</div>
+
+      <!-- discrepancy finder -->
+      <div class="finder-panel" id="finderPanel">
+        <button type="button" class="finder-toggle" onclick="toggleFinder()">
+          <span>Off by an amount? Find it</span>
+          <svg class="finder-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div class="finder-body" id="finderBody" style="display:none;">
+          <div class="finder-row">
+            <input type="text" id="finderAmount" class="mono" placeholder="Amount off by, e.g. 12.50" inputmode="decimal"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault(); runFinder();}">
+            <button type="button" class="btn" onclick="runFinder()">Find</button>
+          </div>
+          <div class="err" id="finder-err"></div>
+          <div id="finderResults"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="table-wrap" id="reconTableWrap">
+      <table class="register" id="reconcileTable" style="display:none;">
+        <thead>
+          <tr>
+            <th class="col-cleared"></th>
+            <th>Date</th>
+            <th>Payee / Description</th>
+            <th>Category</th>
+            <th class="num">Withdraw</th>
+            <th class="num">Deposit</th>
+          </tr>
+        </thead>
+        <tbody id="reconcileBody"></tbody>
+      </table>
+      <div class="empty-hint" id="reconEmptyHint" style="display:none;">No transactions in this range.</div>
     </div>
   </div>
 
@@ -562,6 +711,14 @@ let searchDebounceTimer = null;
 let registerUIInit = false;
 let editingCategoryId = null;
 let pendingDeleteCategory = null;
+
+/* ---------- Phase 5: reconcile view ---------- */
+let RECON = [];
+let reconRange = { from:null, to:null };
+let reconUIInit = false;
+let currentView = "register";
+let reconSummary = null;
+let finderOpen = false;
 
 /* ---------- money formatting (display only; storage stays integer cents) ---------- */
 function fmtMoney(cents){
@@ -998,6 +1155,228 @@ function initRegisterUI(){
   );
 }
 
+/* ---------- Phase 5: reconcile view ---------- */
+function initReconcileUI(){
+  if (reconUIInit) return;
+  reconUIInit = true;
+
+  createRangeControl($("reconRangeSlot"), (range) => {
+    reconRange = { from: range.from, to: range.to };
+    clearFinderResults(); // a changed date range makes prior finder results stale
+    loadReconcile();
+  });
+}
+
+function switchView(view){
+  currentView = view;
+  $("registerWrap").style.display = view === "register" ? "flex" : "none";
+  $("reconcileWrap").style.display = view === "reconcile" ? "flex" : "none";
+  $("tabRegisterBtn").classList.toggle("active", view === "register");
+  $("tabReconcileBtn").classList.toggle("active", view === "reconcile");
+  if (view === "reconcile"){
+    loadReconcile(); // data may have changed in the register, always refresh
+  } else {
+    loadRegister(); // edits made while reconciling must never look stale
+  }
+}
+
+async function loadReconcile(){
+  if (!api() || !STATE.account) return;
+  const r = await api().get_reconcile_data(STATE.account.id, reconRange.from, reconRange.to);
+  if (!r || !r.ok) return;
+  RECON = r.rows;
+  reconSummary = r.summary;
+  renderReconcile();
+  renderReconSummary(r.summary);
+}
+
+function renderReconcile(){
+  const table = $("reconcileTable");
+  const body = $("reconcileBody");
+  const emptyHint = $("reconEmptyHint");
+  if (!RECON.length){
+    table.style.display = "none";
+    emptyHint.style.display = "block";
+    return;
+  }
+  emptyHint.style.display = "none";
+  table.style.display = "table";
+  body.innerHTML = RECON.map(reconRowHtml).join("");
+}
+
+function reconRowHtml(row){
+  const withdrawCell = row.amount_cents < 0
+    ? `<span class="amt withdraw-amt">${esc(fmtMoney(Math.abs(row.amount_cents)))}</span>` : "";
+  const depositCell = row.amount_cents > 0
+    ? `<span class="amt deposit-amt">${esc(fmtMoney(row.amount_cents))}</span>` : "";
+  return `<tr data-id="${row.id}">
+    <td class="col-cleared"><label class="recon-check-wrap">
+      <input type="checkbox" class="recon-check" ${row.cleared ? "checked" : ""}
+             onchange="onReconCheckboxChange(${row.id}, this.checked)">
+    </label></td>
+    <td class="col-date">${esc(row.date)}</td>
+    <td class="col-payee" title="${esc(row.payee)}">${esc(row.payee)}</td>
+    <td class="col-category" title="${esc(row.category)}">${esc(row.category)}</td>
+    <td class="num">${withdrawCell}</td>
+    <td class="num">${depositCell}</td>
+  </tr>`;
+}
+
+/* Only the summary numbers are re-rendered on toggle, never the whole table,
+   so scroll position and focus are preserved while checking off rows. */
+function renderReconSummary(summary){
+  const clearedEl = $("reconClearedAmt");
+  clearedEl.textContent = fmtMoney(summary.cleared_balance_cents);
+  clearedEl.className = "recon-amt" + (summary.cleared_balance_cents < 0 ? " neg" : "");
+
+  const registerEl = $("reconRegisterAmt");
+  registerEl.textContent = fmtMoney(summary.register_balance_cents);
+  registerEl.className = "recon-amt" + (summary.register_balance_cents < 0 ? " neg" : "");
+
+  const diffEl = $("reconDiffAmt");
+  diffEl.textContent = fmtMoney(summary.difference_cents);
+  let diffCls = "recon-amt";
+  if (summary.difference_cents === 0) diffCls += " zero";
+  else if (summary.difference_cents < 0) diffCls += " neg";
+  diffEl.className = diffCls;
+}
+
+async function onReconCheckboxChange(id, checked){
+  const row = RECON.find(r => r.id === id);
+  const prevChecked = !checked; // the state the checkbox was in before this click
+  if (!api()){
+    revertReconCheckbox(id, prevChecked);
+    return;
+  }
+  const r = await api().set_transaction_cleared(id, checked);
+  if (!r || !r.ok){
+    revertReconCheckbox(id, prevChecked);
+    return;
+  }
+  if (row) row.cleared = checked;
+  reconSummary = r.summary;
+  renderReconSummary(r.summary);
+}
+function revertReconCheckbox(id, checked){
+  const cb = document.querySelector(`#reconcileBody tr[data-id="${id}"] .recon-check`);
+  if (cb) cb.checked = checked;
+}
+
+/* ---------- Phase 5: discrepancy finder ---------- */
+function toggleFinder(){
+  finderOpen = !finderOpen;
+  $("finderPanel").classList.toggle("open", finderOpen);
+  $("finderBody").style.display = finderOpen ? "block" : "none";
+  if (finderOpen && reconSummary && reconSummary.difference_cents){
+    // prefill with the current absolute difference, only when there is one
+    $("finderAmount").value = (Math.abs(reconSummary.difference_cents) / 100).toFixed(2);
+  }
+}
+
+function clearFinderResults(){
+  $("finderResults").innerHTML = "";
+  $("finder-err").textContent = "";
+}
+
+async function runFinder(){
+  const errEl = $("finder-err");
+  errEl.textContent = "";
+  const raw = $("finderAmount").value.trim();
+  if (!raw){ errEl.textContent = "Enter the amount you are off by."; return; }
+  if (!api() || !STATE.account) return;
+  const r = await api().find_discrepancy(STATE.account.id, raw, reconRange.from, reconRange.to);
+  if (!r || !r.ok){
+    errEl.textContent = (r && r.error) || "Something went wrong.";
+    $("finderResults").innerHTML = "";
+    return;
+  }
+  renderFinderResults(r);
+}
+
+/* A transaction listed by the finder is only in the visible reconcile table
+   when it falls inside the current range (exact/half search full history). */
+function finderTxRowHtml(row){
+  const inRange = RECON.some(t => t.id === row.id);
+  const titleAttr = inRange ? "" : ` title="Outside the current date range"`;
+  // A cleared marker lets the user dismiss a coincidental match on a
+  // transaction that's already reconciled, without leaving this panel.
+  const clearedMark = row.cleared
+    ? `<span class="finder-tx-cleared is-cleared" title="Cleared">&#10003;</span>`
+    : `<span class="finder-tx-cleared not-cleared" title="Not cleared">&#9675;</span>`;
+  return `<div class="finder-tx-row" onclick="focusReconRow(${row.id})"${titleAttr}>
+    ${clearedMark}
+    <span class="finder-tx-date">${esc(row.date)}</span>
+    <span class="finder-tx-payee" title="${esc(row.payee)}">${esc(row.payee)}</span>
+    <span class="finder-tx-amt">${esc(fmtMoney(row.amount_cents))}</span>
+  </div>`;
+}
+
+function finderGroupHtml(title, hint, bodyHtml){
+  return `<div class="finder-group">
+    <h4>${esc(title)}</h4>
+    <div class="finder-hint">${esc(hint)}</div>
+    ${bodyHtml}
+  </div>`;
+}
+
+function renderFinderResults(r){
+  const groups = [];
+  if (r.unchecked_match){
+    const n = r.unchecked_match.count;
+    const hint = n === 1
+      ? "This amount equals your 1 unchecked transaction. If you have checked off everything on the bank statement, that transaction accounts for the whole difference."
+      : `This amount equals the combined total of all ${n} unchecked transactions. If you have checked off everything on the bank statement, those transactions account for the whole difference.`;
+    groups.push(finderGroupHtml("Unchecked transactions", hint, ""));
+  }
+  if (r.exact.length){
+    groups.push(finderGroupHtml(
+      "Exact matches",
+      "One transaction equals the difference. It may be missing from the bank statement or entered twice.",
+      r.exact.map(finderTxRowHtml).join("")
+    ));
+  }
+  if (r.half.length){
+    groups.push(finderGroupHtml(
+      "Half matches",
+      "One transaction equals half the difference. It may have been entered as the wrong type (withdraw vs deposit).",
+      r.half.map(finderTxRowHtml).join("")
+    ));
+  }
+  if (r.transposition_hint){
+    groups.push(finderGroupHtml(
+      "Transposed digits?",
+      "The difference divides evenly by 9, which often means two digits were swapped in an amount. Double-check recently entered amounts.",
+      ""
+    ));
+  }
+  if (r.combinations_skipped){
+    groups.push(finderGroupHtml(
+      "Possible combinations",
+      "Sets of transactions from the selected date range that add up to the difference. Treat these as leads, not answers.",
+      `<div class="finder-hint">Too many transactions in range to search combinations. Narrow the date range.</div>`
+    ));
+  } else if (r.combinations.length){
+    groups.push(finderGroupHtml(
+      "Possible combinations",
+      "Sets of transactions from the selected date range that add up to the difference. Treat these as leads, not answers.",
+      r.combinations.map(combo => `<div class="finder-combo">${combo.map(finderTxRowHtml).join("")}</div>`).join("")
+    ));
+  }
+  if (!groups.length){
+    $("finderResults").innerHTML = `<div class="finder-hint">No matches found. Try widening the date range or double-check the amount.</div>`;
+    return;
+  }
+  $("finderResults").innerHTML = groups.join("");
+}
+
+function focusReconRow(id){
+  const tr = document.querySelector(`#reconcileBody tr[data-id="${id}"]`);
+  if (!tr) return; // outside the current range: nothing on screen to point to
+  tr.scrollIntoView({ block: "center", behavior: "smooth" });
+  tr.classList.add("recon-flash");
+  setTimeout(() => tr.classList.remove("recon-flash"), 1200);
+}
+
 /* ---------- account settings modal ---------- */
 function openAccountModal(){
   if (!STATE.account) return;
@@ -1107,13 +1486,20 @@ async function createAccount(){
 
 function showRegisterView(){
   $("firstrunWrap").style.display = "none";
+  $("viewTabs").style.display = "block";
   $("registerWrap").style.display = "flex";
+  $("reconcileWrap").style.display = "none";
+  $("tabRegisterBtn").classList.add("active");
+  $("tabReconcileBtn").classList.remove("active");
+  currentView = "register";
   $("headCenter").style.display = "flex";
   renderHeader();
   resetEntryForm();
 }
 function showFirstRunView(){
   $("registerWrap").style.display = "none";
+  $("reconcileWrap").style.display = "none";
+  $("viewTabs").style.display = "none";
   $("headCenter").style.display = "none";
   $("firstrunWrap").style.display = "flex";
   $("fr-date").value = todayIso();
@@ -1327,6 +1713,7 @@ async function boot(){
   $("verLabel").textContent = "v" + (STATE.version || "1.0.0");
 
   initRegisterUI();
+  initReconcileUI();
 
   if (STATE.hasAccount){
     showRegisterView();

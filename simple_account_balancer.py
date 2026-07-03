@@ -12,6 +12,7 @@ shell with the standard header/bottom bar.
 """
 import ctypes
 import datetime
+import itertools
 import json
 import os
 import shutil
@@ -553,6 +554,232 @@ class Api:
         except Exception as e:
             self.log(f"delete_transaction failed: {e}")
             return {"ok": False, "error": "Couldn't delete the transaction."}
+
+    # --- reconcile --------------------------------------------------------------
+    def _reconcile_summary(self, account) -> dict:
+        """Cleared vs. register totals for the reconcile view, in integer cents.
+        Cleared total is full history (a bank statement balance is cumulative,
+        not scoped to whatever date range the view happens to be showing)."""
+        cur = self._conn.cursor()
+        cleared_total = cur.execute(
+            "SELECT COALESCE(SUM(amount_cents), 0) FROM transactions "
+            "WHERE account_id=? AND cleared=1",
+            (account["id"],),
+        ).fetchone()[0]
+        register_balance_cents = self._current_balance_cents(account)
+        cleared_balance_cents = account["starting_balance_cents"] + cleared_total
+        return {
+            "register_balance_cents": register_balance_cents,
+            "cleared_balance_cents": cleared_balance_cents,
+            "difference_cents": register_balance_cents - cleared_balance_cents,
+        }
+
+    def set_transaction_cleared(self, transaction_id, cleared):
+        """Toggle a transaction's cleared flag. Never affects any balance;
+        it only changes which side of the reconcile summary it counts on."""
+        try:
+            cur = self._conn.cursor()
+            row = cur.execute("SELECT * FROM transactions WHERE id=?", (transaction_id,)).fetchone()
+            if row is None:
+                return {"ok": False, "error": "That transaction no longer exists."}
+            cur.execute(
+                "UPDATE transactions SET cleared=? WHERE id=?",
+                (1 if cleared else 0, transaction_id),
+            )
+            self._conn.commit()
+            self.log(f"Transaction {transaction_id} cleared set to {bool(cleared)}")
+            account = self._get_account(row["account_id"])
+            return {"ok": True, "summary": self._reconcile_summary(account)}
+        except Exception as e:
+            self.log(f"set_transaction_cleared failed: {e}")
+            return {"ok": False, "error": "Couldn't update the cleared status."}
+
+    def get_reconcile_data(self, account_id=None, from_date=None, to_date=None):
+        """Rows and summary totals for the reconcile view. Rows are scoped to
+        the given date range like the register; the summary totals are always
+        computed over the full history. With no from_date, falls back to the
+        last 30 days."""
+        try:
+            account = self._get_account(account_id)
+            if account is None:
+                return {"ok": False, "error": "No account exists yet."}
+            cur = self._conn.cursor()
+            from_s = (from_date or "").strip()
+            if not from_s:
+                from_s = (datetime.date.today() - datetime.timedelta(days=DEFAULT_RANGE_DAYS)).isoformat()
+            to_s = (to_date or "").strip()
+
+            query = (
+                "SELECT id, date, payee, category, notes, amount_cents, cleared "
+                "FROM transactions WHERE account_id=? AND date>=?"
+            )
+            params = [account["id"], from_s]
+            if to_s:
+                query += " AND date<=?"
+                params.append(to_s)
+            query += " ORDER BY date ASC, id ASC"
+            rows = cur.execute(query, params).fetchall()
+            payload_rows = [
+                {
+                    "id": r["id"],
+                    "date": r["date"],
+                    "payee": r["payee"],
+                    "category": r["category"],
+                    "notes": r["notes"],
+                    "amount_cents": r["amount_cents"],
+                    "cleared": bool(r["cleared"]),
+                }
+                for r in rows
+            ]
+            return {
+                "ok": True,
+                "rows": payload_rows,
+                "summary": self._reconcile_summary(account),
+            }
+        except Exception as e:
+            self.log(f"get_reconcile_data failed: {e}")
+            return {"ok": False, "error": "Couldn't load the reconcile data."}
+
+    def find_discrepancy(self, account_id=None, amount=None, from_date=None, to_date=None):
+        """Look for likely causes of a reconcile difference: a single transaction
+        that matches it exactly, one that matches half of it (a wrong withdraw
+        or deposit direction), a divisible-by-9 hint (a classic transposed-digit
+        typo), and combinations of the visible-range transactions that add up
+        to it (unchecked transactions searched first, since they are the prime
+        suspects for a reconcile difference)."""
+        try:
+            cents, err = parse_amount_to_cents(amount, allow_negative=True, allow_zero=True)
+            if err:
+                return {"ok": False, "error": err}
+            diff_cents = abs(cents)
+            if diff_cents == 0:
+                return {"ok": False, "error": "Enter the amount you are off by."}
+
+            account = self._get_account(account_id)
+            if account is None:
+                return {"ok": False, "error": "No account exists yet."}
+
+            cur = self._conn.cursor()
+
+            # 0. unchecked_match: the register balance and the cleared balance
+            # are both full-history numbers, so their difference always equals
+            # the full-history unchecked total. If that total matches the
+            # entered amount, everything still unchecked explains it.
+            unchecked_row = cur.execute(
+                "SELECT COUNT(*) AS cnt, COALESCE(SUM(amount_cents), 0) AS total "
+                "FROM transactions WHERE account_id=? AND cleared=0",
+                (account["id"],),
+            ).fetchone()
+            unchecked_match = None
+            if unchecked_row["cnt"] > 0 and abs(unchecked_row["total"]) == diff_cents:
+                unchecked_match = {"count": unchecked_row["cnt"], "total_cents": unchecked_row["total"]}
+
+            from_s = (from_date or "").strip()
+            if not from_s:
+                from_s = (datetime.date.today() - datetime.timedelta(days=DEFAULT_RANGE_DAYS)).isoformat()
+            to_s = (to_date or "").strip()
+
+            def row_dict(r):
+                return {
+                    "id": r["id"],
+                    "date": r["date"],
+                    "payee": r["payee"],
+                    "amount_cents": r["amount_cents"],
+                    "cleared": bool(r["cleared"]),
+                }
+
+            # 1. exact: full history, any transaction whose absolute amount matches.
+            exact_rows = cur.execute(
+                "SELECT id, date, payee, amount_cents, cleared FROM transactions "
+                "WHERE account_id=? AND ABS(amount_cents)=? ORDER BY date ASC, id ASC",
+                (account["id"], diff_cents),
+            ).fetchall()
+            exact = [row_dict(r) for r in exact_rows]
+
+            # 2. half: only meaningful when the difference splits evenly into cents.
+            half = []
+            if diff_cents % 2 == 0:
+                half_rows = cur.execute(
+                    "SELECT id, date, payee, amount_cents, cleared FROM transactions "
+                    "WHERE account_id=? AND ABS(amount_cents)=? ORDER BY date ASC, id ASC",
+                    (account["id"], diff_cents // 2),
+                ).fetchall()
+                half = [row_dict(r) for r in half_rows]
+
+            # 3. transposition hint: a swapped-digits typo always produces a
+            # difference divisible by 9.
+            transposition_hint = diff_cents % 9 == 0
+
+            # 4. combinations: always searched, scoped to the visible date range,
+            # same as the reconcile table itself, not the full history. A
+            # coincidental exact or half match should never hide a combination
+            # the user actually needed.
+            combinations = []
+            combinations_skipped = False
+            query = "SELECT id, date, payee, amount_cents, cleared FROM transactions WHERE account_id=? AND date>=?"
+            params = [account["id"], from_s]
+            if to_s:
+                query += " AND date<=?"
+                params.append(to_s)
+            query += " ORDER BY date ASC, id ASC"
+            range_rows = cur.execute(query, params).fetchall()
+
+            if len(range_rows) > 300:
+                combinations_skipped = True
+            else:
+                range_list = [row_dict(r) for r in range_rows]
+                unchecked_list = [r for r in range_list if not r["cleared"]]
+                targets = (diff_cents, -diff_cents)
+                allow_triples = len(range_list) <= 100
+                seen_id_sets = set()
+
+                def search_combos(rows, cap_remaining):
+                    found_here = []
+                    for pair in itertools.combinations(rows, 2):
+                        ids = frozenset(r["id"] for r in pair)
+                        if ids in seen_id_sets:
+                            continue
+                        if sum(r["amount_cents"] for r in pair) in targets:
+                            found_here.append(list(pair))
+                            seen_id_sets.add(ids)
+                            if len(found_here) >= cap_remaining:
+                                return found_here
+                    if allow_triples:
+                        for triple in itertools.combinations(rows, 3):
+                            ids = frozenset(r["id"] for r in triple)
+                            if ids in seen_id_sets:
+                                continue
+                            if sum(r["amount_cents"] for r in triple) in targets:
+                                found_here.append(list(triple))
+                                seen_id_sets.add(ids)
+                                if len(found_here) >= cap_remaining:
+                                    return found_here
+                    return found_here
+
+                # Pass 1: unchecked transactions only, the prime suspects.
+                found = search_combos(unchecked_list, 10)
+                # Pass 2: all range rows, skipping id sets already found in pass 1.
+                if len(found) < 10:
+                    found.extend(search_combos(range_list, 10 - len(found)))
+                combinations = found[:10]
+
+            self.log(
+                f"find_discrepancy {diff_cents}c: unchecked_match={unchecked_match is not None} "
+                f"exact={len(exact)} half={len(half)} transposition_hint={transposition_hint} "
+                f"combinations={len(combinations)} combinations_skipped={combinations_skipped}"
+            )
+            return {
+                "ok": True,
+                "unchecked_match": unchecked_match,
+                "exact": exact,
+                "half": half,
+                "transposition_hint": transposition_hint,
+                "combinations": combinations,
+                "combinations_skipped": combinations_skipped,
+            }
+        except Exception as e:
+            self.log(f"find_discrepancy failed: {e}")
+            return {"ok": False, "error": "Couldn't search for the discrepancy."}
 
     # --- theme preference (local file, not stored in the db) ----------------
     def _pref_path(self) -> str:
