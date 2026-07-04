@@ -24,7 +24,9 @@ If you enjoyed this project and would like to buy me a coffee, check out my [Ko-
 - Quick entry with payee autocomplete and freely editable categories.
 - Autopays: catalog a recurring bill or deposit once and the app posts it to
   the register automatically each month, appearing on the day you choose and
-  shown dimmed until its date arrives.
+  shown dimmed until its date arrives. Bills that change month to month can be
+  marked "variable": each posting arrives as an estimate, flagged in the
+  register, that you confirm once you know the real amount.
 - Search, filtering, and shared date-range views (Last 7/14/30/90 days, or a
   custom range).
 - Reconcile view with cleared checkboxes and a discrepancy finder that hunts
@@ -97,6 +99,8 @@ There are no stored secrets, so that's all you need to carry over.
 4. For recurring bills and deposits, open **Autopays** in the register view
    and add each one once: what it pays, the day it should appear in the
    register, and the day it pays. The app enters them for you from then on.
+   For a bill whose amount changes each month, tick "Variable amount": each
+   posting shows an estimate marker until you confirm the real figure.
 5. Use the Reconcile tab to check entries off against your bank statement.
    If the numbers disagree, type the difference into the discrepancy finder
    to help track it down.
