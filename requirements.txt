@@ -6,4 +6,4 @@
 pywebview==6.2.1
 PySide6==6.11.1
 qtpy==2.4.3
-pyinstaller==6.19.0
+pyinstaller==6.21.0
