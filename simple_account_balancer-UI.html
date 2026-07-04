@@ -528,7 +528,7 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
       </div>
       <div class="balance-caption">Today's balance</div>
       <div class="balance-big" id="balanceBig">$0.00</div>
-      <div class="balance-upcoming" id="balanceUpcoming" style="display:none;">After upcoming: <span class="amt-upcoming" id="balanceUpcomingAmt"></span></div>
+      <div class="balance-upcoming" id="balanceUpcoming" style="display:none;">After scheduled transactions: <span class="amt-upcoming" id="balanceUpcomingAmt"></span></div>
     </div>
     <div class="head-right">
       <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle theme">
@@ -2474,6 +2474,14 @@ async function submitAutopayForm(){
   }
   AUTOPAYS = r.autopays;
   editingAutopayId = null;
+  if (typeof r.posted === "number" && r.posted > 0){
+    // A due autopay just posted a real transaction: re-fetch the account
+    // into STATE.account (same path used when switching accounts) before
+    // showing the list, so the register behind it is already current.
+    const cfg = await api().get_config();
+    if (cfg && cfg.ok) applyConfig(cfg);
+    await refreshForActiveAccount();
+  }
   showApListScreen();
   renderApList();
 }

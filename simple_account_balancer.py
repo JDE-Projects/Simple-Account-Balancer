@@ -15,6 +15,7 @@ newer build.
 """
 import calendar
 import ctypes
+import ctypes.wintypes as wintypes
 import datetime
 import itertools
 import json
@@ -182,6 +183,60 @@ def save_prefs(prefs: dict) -> bool:
         return True
     except Exception:
         return False
+
+
+def _restore_geometry() -> dict:
+    """Read a saved window position/size out of prefs, validated against the
+    monitors currently connected. Returns {} (meaning "let pywebview center
+    it as usual") whenever the saved value is missing, malformed, or points
+    somewhere that isn't reachable anymore, e.g. a monitor that's since been
+    unplugged. Never raises."""
+    try:
+        geo = load_prefs().get("window")
+        if not isinstance(geo, dict):
+            return {}
+        x, y, width, height = geo.get("x"), geo.get("y"), geo.get("width"), geo.get("height")
+        for v in (x, y, width, height):
+            if not isinstance(v, int) or isinstance(v, bool):
+                return {}
+        width = max(950, min(width, 10000))
+        height = max(650, min(height, 10000))
+
+        # Confirm a point inside the title bar area is still on a connected
+        # monitor; MonitorFromPoint returns NULL if it isn't (for example the
+        # saved monitor has been unplugged since the last launch).
+        point = wintypes.POINT(x + 100, y + 30)
+        user32 = ctypes.windll.user32
+        user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+        user32.MonitorFromPoint.restype = wintypes.HMONITOR
+        MONITOR_DEFAULTTONULL = 0
+        monitor = user32.MonitorFromPoint(point, MONITOR_DEFAULTTONULL)
+        if not monitor:
+            return {}
+
+        return {"x": x, "y": y, "width": width, "height": height}
+    except Exception:
+        return {}
+
+
+def _save_geometry(win) -> None:
+    """Save the window's current position/size to prefs so the next launch
+    can restore it. Guarded end-to-end so a failure here can never interfere
+    with closing the app."""
+    try:
+        x, y, width, height = win.x, win.y, win.width, win.height
+        for v in (x, y, width, height):
+            if not isinstance(v, int) or isinstance(v, bool):
+                return
+        # A minimized window reports a position around -32000; don't save
+        # that as if it were the user's chosen spot.
+        if x <= -30000 or y <= -30000:
+            return
+        prefs = load_prefs()
+        prefs["window"] = {"x": x, "y": y, "width": width, "height": height}
+        save_prefs(prefs)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -859,7 +914,18 @@ class Api:
                 cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
             self._conn.commit()
             self.log(f"Added autopay, next post {post_s}, next pay {pay_s}")
-            return self.get_autopays(account["id"])
+            posted = 0
+            try:
+                posted = self.post_due_autopays()
+            except Exception as e:
+                self.log(f"post_due_autopays call failed: {e}")
+            # This posting pass is triggered from the UI, not launch, so don't
+            # leave a stale launch notice for the next startup to pick up.
+            self.autopay_notice = None
+            result = self.get_autopays(account["id"])
+            if result.get("ok"):
+                result["posted"] = posted
+            return result
         except Exception as e:
             self.log(f"add_autopay failed: {e}")
             return {"ok": False, "error": "Couldn't add the autopay."}
@@ -902,7 +968,18 @@ class Api:
                 cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
             self._conn.commit()
             self.log(f"Updated autopay {autopay_id}, next post {post_s}, next pay {pay_s}")
-            return self.get_autopays(row["account_id"])
+            posted = 0
+            try:
+                posted = self.post_due_autopays()
+            except Exception as e:
+                self.log(f"post_due_autopays call failed: {e}")
+            # This posting pass is triggered from the UI, not launch, so don't
+            # leave a stale launch notice for the next startup to pick up.
+            self.autopay_notice = None
+            result = self.get_autopays(row["account_id"])
+            if result.get("ok"):
+                result["posted"] = posted
+            return result
         except Exception as e:
             self.log(f"update_autopay failed: {e}")
             return {"ok": False, "error": "Couldn't update the autopay."}
@@ -1817,16 +1894,36 @@ def main():
     except Exception as e:
         api.log(f"post_due_autopays call failed: {e}")
 
-    win = webview.create_window(
-        "Simple Account Balancer",
-        url=resource_path("simple_account_balancer-UI.html"),
-        js_api=api,
-        width=1150,
-        height=760,
-        min_size=(950, 650),
-        background_color="#0a0e14",
-    )
+    geo = _restore_geometry()
+    if geo:
+        win = webview.create_window(
+            "Simple Account Balancer",
+            url=resource_path("simple_account_balancer-UI.html"),
+            js_api=api,
+            x=geo["x"],
+            y=geo["y"],
+            width=geo["width"],
+            height=geo["height"],
+            min_size=(950, 650),
+            background_color="#0a0e14",
+        )
+    else:
+        win = webview.create_window(
+            "Simple Account Balancer",
+            url=resource_path("simple_account_balancer-UI.html"),
+            js_api=api,
+            width=1150,
+            height=760,
+            min_size=(950, 650),
+            background_color="#0a0e14",
+        )
     api.set_window(win)
+
+    def _on_window_closing():
+        _save_geometry(win)
+        return True
+
+    win.events.closing += _on_window_closing
     win.events.loaded += _on_window_ready
     threading.Timer(30, _close_splash).start()  # ceiling: never hang
     try:
