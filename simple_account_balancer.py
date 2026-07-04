@@ -289,6 +289,7 @@ def open_db(path: str) -> sqlite3.Connection:
             notes TEXT NOT NULL DEFAULT '',
             amount_cents INTEGER NOT NULL,
             cleared INTEGER NOT NULL DEFAULT 0,
+            estimated INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS categories (
@@ -306,6 +307,7 @@ def open_db(path: str) -> sqlite3.Connection:
             next_post_date TEXT NOT NULL,
             pay_day INTEGER NOT NULL,
             post_day INTEGER NOT NULL,
+            is_variable INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
         );
         """
@@ -322,6 +324,15 @@ def open_db(path: str) -> sqlite3.Connection:
     if "starting_balance_prev_cents" not in account_cols:
         conn.execute("ALTER TABLE accounts ADD COLUMN starting_balance_prev_cents INTEGER")
         conn.execute("ALTER TABLE accounts ADD COLUMN starting_balance_changed_at TEXT")
+
+    # Migration for variable autopays: transactions posted from a rule marked
+    # "variable" arrive flagged as an estimate the user later confirms.
+    transaction_cols = {r["name"] for r in conn.execute("PRAGMA table_info(transactions)")}
+    if "estimated" not in transaction_cols:
+        conn.execute("ALTER TABLE transactions ADD COLUMN estimated INTEGER NOT NULL DEFAULT 0")
+    autopay_cols = {r["name"] for r in conn.execute("PRAGMA table_info(autopays)")}
+    if "is_variable" not in autopay_cols:
+        conn.execute("ALTER TABLE autopays ADD COLUMN is_variable INTEGER NOT NULL DEFAULT 0")
 
     # Standing rule: migrations in this function must stay additive-only (new
     # tables/columns guarded by an existence check, never a destructive
@@ -684,7 +695,7 @@ class Api:
         filters to a visible range) and export_csv (which does the same)."""
         cur = self._conn.cursor()
         all_rows = cur.execute(
-            "SELECT id, date, payee, category, notes, amount_cents, cleared "
+            "SELECT id, date, payee, category, notes, amount_cents, cleared, estimated "
             "FROM transactions WHERE account_id=? ORDER BY date ASC, id ASC",
             (account["id"],),
         ).fetchall()
@@ -701,6 +712,7 @@ class Api:
                     "notes": r["notes"],
                     "amount_cents": r["amount_cents"],
                     "cleared": bool(r["cleared"]),
+                    "estimated": bool(r["estimated"]),
                     "balance_cents": running,
                 }
             )
@@ -741,6 +753,12 @@ class Api:
             today_balance_cents = account["starting_balance_cents"] + sum(
                 row["amount_cents"] for row in computed if row["date"] <= today_s
             )
+            # Derived, never stored: how many estimated postings have come due
+            # so far, across the full account history (not just the visible
+            # range), so the notice can never drift from the register itself.
+            estimated_due_count = sum(
+                1 for row in computed if row["estimated"] and row["date"] <= today_s
+            )
 
             return {
                 "ok": True,
@@ -748,6 +766,7 @@ class Api:
                 "current_balance_cents": current_balance_cents,
                 "today_balance_cents": today_balance_cents,
                 "transaction_count": len(computed),
+                "estimated_due_count": estimated_due_count,
             }
         except Exception as e:
             self.log(f"get_transactions failed: {e}")
@@ -837,6 +856,31 @@ class Api:
             self.log(f"delete_transaction failed: {e}")
             return {"ok": False, "error": "Couldn't delete the transaction."}
 
+    def confirm_estimated_amount(self, transaction_id, amount):
+        """Correct an estimated autopay posting's amount. Only the amount and
+        the estimated flag change: the row's existing sign (withdraw stays
+        negative, deposit stays positive) is preserved, and cleared status,
+        the rule, and every other field are left untouched."""
+        try:
+            cur = self._conn.cursor()
+            row = cur.execute("SELECT * FROM transactions WHERE id=?", (transaction_id,)).fetchone()
+            if row is None:
+                return {"ok": False, "error": "That transaction no longer exists."}
+            cents, err = parse_amount_to_cents(amount, allow_negative=False, allow_zero=False)
+            if err:
+                return {"ok": False, "error": err}
+            signed = -cents if row["amount_cents"] < 0 else cents
+            cur.execute(
+                "UPDATE transactions SET amount_cents=?, estimated=0 WHERE id=?",
+                (signed, transaction_id),
+            )
+            self._conn.commit()
+            self.log(f"Confirmed estimated amount for transaction {transaction_id}")
+            return {"ok": True}
+        except Exception as e:
+            self.log(f"confirm_estimated_amount failed: {e}")
+            return {"ok": False, "error": "Couldn't confirm the amount."}
+
     # --- autopays ---------------------------------------------------------------
     def get_autopays(self, account_id):
         """Autopay rules for the account, ordered by their post-day anchor
@@ -849,7 +893,7 @@ class Api:
             cur = self._conn.cursor()
             rows = cur.execute(
                 "SELECT id, payee, category, notes, amount_cents, next_post_date, "
-                "next_pay_date, post_day, pay_day FROM autopays WHERE account_id=? "
+                "next_pay_date, post_day, pay_day, is_variable FROM autopays WHERE account_id=? "
                 "ORDER BY post_day, payee COLLATE NOCASE",
                 (account["id"],),
             ).fetchall()
@@ -864,6 +908,7 @@ class Api:
                     "next_pay_date": r["next_pay_date"],
                     "post_day": r["post_day"],
                     "pay_day": r["pay_day"],
+                    "is_variable": bool(r["is_variable"]),
                 }
                 for r in rows
             ]
@@ -872,10 +917,12 @@ class Api:
             self.log(f"get_autopays failed: {e}")
             return {"ok": False, "error": "Couldn't load the autopays."}
 
-    def add_autopay(self, account_id, payee, category, notes, amount, direction, post_date, pay_date):
+    def add_autopay(self, account_id, payee, category, notes, amount, direction, post_date, pay_date, is_variable=0):
         """Create a recurring autopay rule. post_date and pay_date are the
         first occurrence; their day numbers become the hidden post_day and
-        pay_day anchors used to advance the rule each month."""
+        pay_day anchors used to advance the rule each month. is_variable
+        marks a rule whose amount changes month to month (cell phone, car
+        insurance): postings from it arrive flagged as an estimate to confirm."""
         try:
             account = self._get_account(account_id)
             if account is None:
@@ -899,6 +946,7 @@ class Api:
             signed = -cents if direction == "withdraw" else cents
             category_s = (category or "").strip()
             notes_s = (notes or "").strip()
+            is_variable_i = 1 if is_variable else 0
             post_day = datetime.date.fromisoformat(post_s).day
             pay_day = datetime.date.fromisoformat(pay_s).day
             now = datetime.datetime.now().isoformat(timespec="seconds")
@@ -906,9 +954,9 @@ class Api:
             cur.execute(
                 "INSERT INTO autopays "
                 "(account_id, payee, category, notes, amount_cents, next_pay_date, "
-                "next_post_date, pay_day, post_day, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (account["id"], payee_s, category_s, notes_s, signed, pay_s, post_s, pay_day, post_day, now),
+                "next_post_date, pay_day, post_day, is_variable, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (account["id"], payee_s, category_s, notes_s, signed, pay_s, post_s, pay_day, post_day, is_variable_i, now),
             )
             if category_s:
                 cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
@@ -930,9 +978,12 @@ class Api:
             self.log(f"add_autopay failed: {e}")
             return {"ok": False, "error": "Couldn't add the autopay."}
 
-    def update_autopay(self, autopay_id, payee, category, notes, amount, direction, post_date, pay_date):
+    def update_autopay(self, autopay_id, payee, category, notes, amount, direction, post_date, pay_date, is_variable=0):
         """Edit an autopay rule. Re-anchoring post_day/pay_day from the newly
-        chosen dates is the point of editing them, so both are recomputed."""
+        chosen dates is the point of editing them, so both are recomputed.
+        Toggling is_variable only affects postings this rule makes from now
+        on; transactions it already posted keep whatever estimated flag they
+        posted with."""
         try:
             cur = self._conn.cursor()
             row = cur.execute("SELECT id, account_id FROM autopays WHERE id=?", (autopay_id,)).fetchone()
@@ -957,12 +1008,13 @@ class Api:
             signed = -cents if direction == "withdraw" else cents
             category_s = (category or "").strip()
             notes_s = (notes or "").strip()
+            is_variable_i = 1 if is_variable else 0
             post_day = datetime.date.fromisoformat(post_s).day
             pay_day = datetime.date.fromisoformat(pay_s).day
             cur.execute(
                 "UPDATE autopays SET payee=?, category=?, notes=?, amount_cents=?, "
-                "next_pay_date=?, next_post_date=?, pay_day=?, post_day=? WHERE id=?",
-                (payee_s, category_s, notes_s, signed, pay_s, post_s, pay_day, post_day, autopay_id),
+                "next_pay_date=?, next_post_date=?, pay_day=?, post_day=?, is_variable=? WHERE id=?",
+                (payee_s, category_s, notes_s, signed, pay_s, post_s, pay_day, post_day, is_variable_i, autopay_id),
             )
             if category_s:
                 cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
@@ -1014,7 +1066,7 @@ class Api:
             cur = self._conn.cursor()
             rules = cur.execute(
                 "SELECT id, account_id, payee, category, notes, amount_cents, "
-                "next_pay_date, next_post_date, pay_day, post_day FROM autopays"
+                "next_pay_date, next_post_date, pay_day, post_day, is_variable FROM autopays"
             ).fetchall()
             for rule in rules:
                 next_pay_date = rule["next_pay_date"]
@@ -1030,11 +1082,11 @@ class Api:
                         break
                     cur.execute(
                         "INSERT INTO transactions "
-                        "(account_id, date, payee, category, notes, amount_cents, cleared, created_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
+                        "(account_id, date, payee, category, notes, amount_cents, cleared, estimated, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)",
                         (
                             rule["account_id"], next_pay_date, rule["payee"], rule["category"],
-                            rule["notes"], rule["amount_cents"], now,
+                            rule["notes"], rule["amount_cents"], 1 if rule["is_variable"] else 0, now,
                         ),
                     )
                     posted_count += 1

@@ -260,6 +260,18 @@ table.register tbody tr.future:hover { opacity:.9; }
 .amt.deposit-amt { color:var(--green); }
 .amt.balance-amt { color:var(--text); font-weight:500; }
 .amt.balance-amt.neg { color:var(--red); }
+.est-flag {
+  display:inline-flex; align-items:center; justify-content:center; vertical-align:middle;
+  width:15px; height:15px; margin-right:5px; border-radius:50%;
+  background:color-mix(in srgb, var(--amber) 22%, transparent); color:var(--amber);
+  font-weight:700; font-size:11px; font-family:"Sora", sans-serif; cursor:pointer; transition:.15s;
+}
+.est-flag:hover { background:color-mix(in srgb, var(--amber) 38%, transparent); }
+@keyframes estFlash {
+  0% { background:color-mix(in srgb, var(--amber) 30%, transparent); }
+  100% { background:transparent; }
+}
+table.register tbody tr.est-highlight { animation:estFlash 1.2s ease; }
 .row-actions { display:flex; gap:4px; justify-content:flex-end; opacity:0; transition:.15s; }
 table.register tbody tr:hover .row-actions { opacity:1; }
 .icon-btn {
@@ -382,6 +394,9 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
 .modal .err { color:var(--red); font-size:12px; margin-top:-6px; margin-bottom:10px; min-height:1em; }
 .am-note { font-size:11.5px; color:var(--text-faint); line-height:1.5; margin:-4px 0 12px; }
 .export-note { font-size:12.5px; color:var(--green); margin:-4px 0 12px; }
+.ap-variable-row { display:flex; align-items:center; gap:8px; margin:-4px 0 4px; }
+.ap-variable-row input[type="checkbox"] { accent-color:var(--amber); cursor:pointer; width:15px; height:15px; flex:0 0 auto; }
+.ap-variable-row label { font-size:12.5px; color:var(--text); cursor:pointer; user-select:none; }
 
 /* ---- account settings modal: backups + delete-account sections ---- */
 .am-section { margin-top:18px; padding-top:14px; border-top:1px solid var(--border); }
@@ -482,6 +497,19 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
 }
 .autopay-notice .notice-dismiss:hover { opacity:1; background:color-mix(in srgb, var(--accent) 15%, transparent); }
 .autopay-notice .notice-dismiss svg { width:11px; height:11px; }
+
+/* Lives in the toolbar's center dead-space: the toolbar is space-between, so
+   showing/hiding this never shifts the range control or the right-hand buttons,
+   and the row's height is already set by those taller controls. Text stays on
+   one line (clipped if ever too narrow) so it can't force the toolbar to wrap. */
+.estimate-notice {
+  display:inline-block; font-size:11.5px; color:var(--amber); cursor:pointer;
+  padding:5px 10px; border-radius:var(--radius-sm);
+  border:1px solid color-mix(in srgb, var(--amber) 35%, var(--border));
+  background:color-mix(in srgb, var(--amber) 8%, transparent); transition:.15s;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; min-width:0;
+}
+.estimate-notice:hover { background:color-mix(in srgb, var(--amber) 16%, transparent); }
 
 .dbg-toggle { display:inline-flex; align-items:center; gap:7px; cursor:pointer; user-select:none; }
 .dbg-toggle input { position:absolute; opacity:0; pointer-events:none; }
@@ -606,6 +634,9 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
 
     <div class="toolbar">
       <div id="rangeControlSlot"></div>
+      <div class="estimate-notice" id="estimateNotice" style="display:none;"
+           title="Variable autopays with estimated amounts to confirm against your bank statement. Click to jump to them."
+           onclick="scrollToFirstEstimate()"></div>
       <div class="toolbar-right">
         <div class="toolbar-search">
           <input type="text" id="searchInput" placeholder="Search payee, category, notes" autocomplete="off" oninput="onSearchInput()">
@@ -899,6 +930,11 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
             </div>
           </div>
         </div>
+        <div class="ap-variable-row">
+          <input type="checkbox" id="ap-variable">
+          <label for="ap-variable">Variable amount</label>
+        </div>
+        <div class="am-note">Posts as an estimate you confirm later.</div>
         <div class="fld-row">
           <div class="fld">
             <label>First appears in register</label>
@@ -940,6 +976,23 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
     </div>
   </div>
 
+  <!-- confirm estimated amount modal -->
+  <div class="modal-scrim" id="confirmEstimateModalScrim">
+    <div class="modal">
+      <h3>Confirm amount</h3>
+      <div class="fld">
+        <label>Amount</label>
+        <input id="ce-amount" class="mono" placeholder="0.00" inputmode="decimal"
+               onkeydown="if(event.key==='Enter'){event.preventDefault(); confirmEstimateAmount();}">
+      </div>
+      <div class="err" id="ce-err"></div>
+      <div class="m-foot">
+        <button class="btn" onclick="closeConfirmEstimateModal()">Cancel</button>
+        <button class="btn primary" onclick="confirmEstimateAmount()">Save</button>
+      </div>
+    </div>
+  </div>
+
   <div class="bottom-bar">
     <div class="bar-left">
       <label class="dbg-toggle" title="Write a timestamped debug log next to the app. It records actions and errors only, never payees, amounts, or balances.">
@@ -975,11 +1028,12 @@ function api(){ return window.pywebview && window.pywebview.api; }
 function esc(s){ return (s==null?"":String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 let STATE = { version:"1.0.0", theme:"dark", hasAccount:false, account:null, accounts:[],
-  backupFolder:null, backupFolderIsCustom:false, backupKeep:5 };
+  backupFolder:null, backupFolderIsCustom:false, backupKeep:5, estimatedDueCount:0 };
 let TX = [];
 let direction = "withdraw";
 let editingId = null;
 let pendingDeleteId = null;
+let pendingConfirmEstimateId = null;
 
 /* ---------- Phase 4: categories, payees, range + search ---------- */
 let CATEGORIES = [];
@@ -1361,10 +1415,13 @@ function renderRegister(){
 }
 
 function rowHtml(row){
+  const estFlag = row.estimated
+    ? `<span class="est-flag" title="Estimated amount, click to confirm" onclick="openConfirmEstimate(${row.id})">!</span>`
+    : "";
   const withdrawCell = row.amount_cents < 0
-    ? `<span class="amt withdraw-amt">${esc(fmtMoney(Math.abs(row.amount_cents)))}</span>` : "";
+    ? `${estFlag}<span class="amt withdraw-amt">${esc(fmtMoney(Math.abs(row.amount_cents)))}</span>` : "";
   const depositCell = row.amount_cents > 0
-    ? `<span class="amt deposit-amt">${esc(fmtMoney(row.amount_cents))}</span>` : "";
+    ? `${estFlag}<span class="amt deposit-amt">${esc(fmtMoney(row.amount_cents))}</span>` : "";
   const balCls = row.balance_cents < 0 ? "amt balance-amt neg" : "amt balance-amt";
   const trCls = row.date > todayIso() ? "future" : "";
   return `<tr data-id="${row.id}" class="${trCls}">
@@ -1386,6 +1443,59 @@ function rowHtml(row){
       </span>
     </td>
   </tr>`;
+}
+
+/* ---------- variable autopays: confirm an estimated amount ---------- */
+function openConfirmEstimate(id){
+  const row = TX.find(r => r.id === id);
+  if (!row) return;
+  pendingConfirmEstimateId = id;
+  $("ce-amount").value = (Math.abs(row.amount_cents) / 100).toFixed(2);
+  $("ce-err").textContent = "";
+  $("confirmEstimateModalScrim").classList.add("open");
+  $("ce-amount").focus();
+}
+function closeConfirmEstimateModal(){
+  pendingConfirmEstimateId = null;
+  $("confirmEstimateModalScrim").classList.remove("open");
+}
+async function confirmEstimateAmount(){
+  if (!pendingConfirmEstimateId || !api()) return;
+  const errEl = $("ce-err");
+  errEl.textContent = "";
+  const amount = $("ce-amount").value.trim();
+  if (!amount){ errEl.textContent = "Amount is required."; return; }
+  const id = pendingConfirmEstimateId;
+  const r = await api().confirm_estimated_amount(id, amount);
+  if (!r || !r.ok){
+    errEl.textContent = (r && r.error) || "Something went wrong.";
+    return;
+  }
+  closeConfirmEstimateModal();
+  await loadRegister();
+}
+
+/* Derived, live from the register payload each reload; never stored, so it
+   can never drift from the actual rows. Hidden entirely at zero. */
+function renderEstimateNotice(){
+  const el = $("estimateNotice");
+  const n = STATE.estimatedDueCount || 0;
+  if (n <= 0){
+    el.style.display = "none";
+    el.textContent = "";
+    return;
+  }
+  el.textContent = n === 1 ? "1 estimate ready to confirm" : `${n} estimates ready to confirm`;
+  el.style.display = "";
+}
+function scrollToFirstEstimate(){
+  const flag = document.querySelector("#registerBody .est-flag");
+  if (!flag) return;
+  const tr = flag.closest("tr");
+  if (!tr) return;
+  tr.scrollIntoView({ block:"center" });
+  tr.classList.add("est-highlight");
+  setTimeout(() => tr.classList.remove("est-highlight"), 1200);
 }
 
 function editRow(id){
@@ -1423,8 +1533,10 @@ async function loadRegister(){
   STATE.account.current_balance_cents = r.current_balance_cents;
   STATE.account.today_balance_cents = r.today_balance_cents;
   STATE.account.transaction_count = r.transaction_count;
+  STATE.estimatedDueCount = r.estimated_due_count || 0;
   renderHeader();
   renderRegister();
+  renderEstimateNotice();
 }
 
 /* ---------- toolbar: search ---------- */
@@ -2414,6 +2526,7 @@ function clearApFormFields(){
   $("ap-category").value = "";
   $("ap-notes").value = "";
   $("ap-amount").value = "";
+  $("ap-variable").checked = false;
   $("ap-post-date").value = todayIso();
   $("ap-pay-date").value = todayIso();
   setApDirection("withdraw");
@@ -2435,6 +2548,7 @@ function startEditAutopay(id){
   $("ap-category").value = row.category || "";
   $("ap-notes").value = row.notes || "";
   $("ap-amount").value = (Math.abs(row.amount_cents) / 100).toFixed(2);
+  $("ap-variable").checked = !!row.is_variable;
   setApDirection(row.amount_cents < 0 ? "withdraw" : "deposit");
   $("ap-post-date").value = row.next_post_date;
   $("ap-pay-date").value = row.next_pay_date;
@@ -2457,6 +2571,7 @@ async function submitAutopayForm(){
   const amount = $("ap-amount").value.trim();
   const postDate = $("ap-post-date").value;
   const payDate = $("ap-pay-date").value;
+  const isVariable = $("ap-variable").checked ? 1 : 0;
   if (!payee){ errEl.textContent = "Payee / description is required."; return; }
   if (!amount){ errEl.textContent = "Amount is required."; return; }
   if (!postDate || !payDate){ errEl.textContent = "Both dates are required."; return; }
@@ -2464,9 +2579,9 @@ async function submitAutopayForm(){
   if (!api()) return;
   let r;
   if (editingAutopayId){
-    r = await api().update_autopay(editingAutopayId, payee, category, notes, amount, apDirection, postDate, payDate);
+    r = await api().update_autopay(editingAutopayId, payee, category, notes, amount, apDirection, postDate, payDate, isVariable);
   } else {
-    r = await api().add_autopay(STATE.account.id, payee, category, notes, amount, apDirection, postDate, payDate);
+    r = await api().add_autopay(STATE.account.id, payee, category, notes, amount, apDirection, postDate, payDate, isVariable);
   }
   if (!r || !r.ok){
     errEl.textContent = (r && r.error) || "Something went wrong.";
