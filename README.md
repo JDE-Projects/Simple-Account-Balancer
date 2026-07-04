@@ -18,9 +18,13 @@ If you enjoyed this project and would like to buy me a coffee, check out my [Ko-
 </p>
 
 ## Highlights
-- Rolling balance front and center in the header, next to the active account
-  name; recalculates automatically for out-of-order or backdated entries.
+- Today's balance front and center in the header, next to the active account
+  name; recalculates automatically for out-of-order or backdated entries, with
+  an "After upcoming" line whenever future-dated entries exist.
 - Quick entry with payee autocomplete and freely editable categories.
+- Autopays: catalog a recurring bill or deposit once and the app posts it to
+  the register automatically each month, appearing on the day you choose and
+  shown dimmed until its date arrives.
 - Search, filtering, and shared date-range views (Last 7/14/30/90 days, or a
   custom range).
 - Reconcile view with cleared checkboxes and a discrepancy finder that hunts
@@ -90,17 +94,22 @@ There are no stored secrets, so that's all you need to carry over.
 2. Log each debit or credit as it happens: date, payee, an optional category
    and notes, and the amount.
 3. The header always shows your real, up-to-date balance.
-4. Use the Reconcile tab to check entries off against your bank statement.
+4. For recurring bills and deposits, open **Autopays** in the register view
+   and add each one once: what it pays, the day it should appear in the
+   register, and the day it pays. The app enters them for you from then on.
+5. Use the Reconcile tab to check entries off against your bank statement.
    If the numbers disagree, type the difference into the discrepancy finder
    to help track it down.
-5. Export any date range to CSV from the Export CSV button in the register view.
+6. Export any date range to CSV from the Export CSV button in the register view.
 
 ## Security and privacy
 - Everything stays in the SQLite file next to the exe.
 - No accounts, cloud, telemetry, or bank connections, ever.
 - The only network call is the version check against GitHub Releases.
 - Optional debug log, off by default. When on, it writes
-  `Debug_Log_MMDDYYYY_HHMMSS.txt` next to the app.
+  `Debug_Log_MMDDYYYY_HHMMSS.txt` next to the app. It records actions and
+  errors only, never payees, amounts, or balances, so it is safe to attach
+  to a bug report.
 
 ## A note on how this was built
 This project was built with AI assistance. The design decisions, feature
