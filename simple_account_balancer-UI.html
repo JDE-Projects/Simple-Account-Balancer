@@ -445,6 +445,17 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
 }
 .cat-choice-row select:focus { border-color:var(--accent); }
 
+/* ---- autopays modal ---- */
+.ap-modal { width:460px; }
+.ap-list { max-height:320px; overflow-y:auto; margin:10px 0 4px; border-top:1px solid var(--border); }
+.ap-row { display:flex; align-items:center; gap:8px; padding:9px 2px; border-bottom:1px solid var(--border); }
+.ap-row-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
+.ap-row-line1 { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+.ap-row-line2 {
+  font-size:11.5px; color:var(--text-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.ap-row-cat { margin-left:8px; }
+
 /* ---- bottom bar ---- */
 .bottom-bar {
   flex:0 0 auto; height:44px;
@@ -602,6 +613,7 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
           </button>
         </div>
+        <button type="button" class="btn" onclick="openAutopayModal()">Autopays</button>
         <button type="button" class="btn" onclick="openExportModal()">Export CSV</button>
       </div>
     </div>
@@ -846,6 +858,76 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
     </div>
   </div>
 
+  <!-- autopays modal -->
+  <div class="modal-scrim" id="autopayModalScrim">
+    <div class="modal ap-modal">
+      <h3>Autopays</h3>
+
+      <div id="apScreenList">
+        <div class="ap-list" id="apList"></div>
+        <div class="m-foot">
+          <button class="btn" onclick="closeAutopayModal()">Close</button>
+          <button class="btn primary" onclick="openAddAutopayForm()">Add autopay</button>
+        </div>
+      </div>
+
+      <div id="apScreenForm" style="display:none;">
+        <div class="fld">
+          <label>Payee / description</label>
+          <input id="ap-payee" type="text" placeholder="Payee" autocomplete="off">
+        </div>
+        <div class="fld-row">
+          <div class="fld">
+            <label>Category</label>
+            <input id="ap-category" type="text" placeholder="Optional" autocomplete="off">
+          </div>
+          <div class="fld">
+            <label>Notes</label>
+            <input id="ap-notes" type="text" placeholder="Optional">
+          </div>
+        </div>
+        <div class="fld-row">
+          <div class="fld">
+            <label>Amount</label>
+            <input id="ap-amount" class="mono" placeholder="0.00" inputmode="decimal">
+          </div>
+          <div class="fld">
+            <label>Type</label>
+            <div class="seg" id="apDirSeg">
+              <button type="button" class="withdraw active" onclick="setApDirection('withdraw')">Withdraw</button>
+              <button type="button" class="deposit" onclick="setApDirection('deposit')">Deposit</button>
+            </div>
+          </div>
+        </div>
+        <div class="fld-row">
+          <div class="fld">
+            <label>First appears in register</label>
+            <input id="ap-post-date" type="date">
+          </div>
+          <div class="fld">
+            <label>Pays on</label>
+            <input id="ap-pay-date" type="date">
+          </div>
+        </div>
+        <div class="am-note">Pick the first occurrence. It repeats monthly on those days.</div>
+        <div class="am-note" id="ap-editing-note" style="display:none;">Changes affect future postings only. Rows already in the register are not touched.</div>
+        <div class="err" id="ap-err"></div>
+        <div class="m-foot">
+          <button class="btn" onclick="cancelApForm()">Cancel</button>
+          <button class="btn primary" id="ap-save-btn" onclick="submitAutopayForm()">Add</button>
+        </div>
+      </div>
+
+      <div id="apScreenDelete" style="display:none;">
+        <div class="m-msg" id="ap-del-msg"></div>
+        <div class="m-foot">
+          <button class="btn" onclick="cancelDeleteAutopay()">Cancel</button>
+          <button class="btn danger" onclick="confirmDeleteAutopay()">Delete</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- delete confirm modal -->
   <div class="modal-scrim" id="delModalScrim">
     <div class="modal">
@@ -922,6 +1004,13 @@ let accountMenuOpen = false;
 let exportRange = { from:null, to:null };
 let pendingDeleteAccountName = null;
 let RESTORE = { backups: [], preview: null, pendingFilename: null };
+
+/* ---------- Phase 7: autopays ---------- */
+let AUTOPAYS = [];
+let apUIInit = false;
+let editingAutopayId = null;
+let apDirection = "withdraw";
+let pendingDeleteAutopay = null;
 
 /* ---------- money formatting (display only; storage stays integer cents) ---------- */
 function fmtMoney(cents){
@@ -2214,6 +2303,200 @@ async function deleteCategoryNow(id, reassignTo){
   showCategoryListScreen();
   renderCategoryList();
   await loadRegister();
+}
+
+/* ---------- autopays modal ---------- */
+/* ordinal(n): 1st, 2nd, 3rd, 4th ... 11th-13th are the standard exceptions. */
+function ordinal(n){
+  const v = n % 100;
+  if (v >= 11 && v <= 13) return n + "th";
+  switch (n % 10){
+    case 1: return n + "st";
+    case 2: return n + "nd";
+    case 3: return n + "rd";
+    default: return n + "th";
+  }
+}
+
+/* Payee / category typeahead is wired once; the inputs live in static markup
+   so re-opening the modal never needs to reattach them. */
+function initAutopayUI(){
+  if (apUIInit) return;
+  apUIInit = true;
+  attachSuggest(
+    $("ap-payee"),
+    () => PAYEES.map(p => ({ label: p.payee, sub: p.last_category || "", payee: p.payee, last_category: p.last_category })),
+    (item) => {
+      $("ap-payee").value = item.payee;
+      if (!$("ap-category").value.trim() && item.last_category) $("ap-category").value = item.last_category;
+    }
+  );
+  attachSuggest(
+    $("ap-category"),
+    () => CATEGORIES.map(c => ({ label: c.name, name: c.name })),
+    (item) => { $("ap-category").value = item.name; },
+    { openOnFocus: true }
+  );
+}
+
+function setApDirection(dir){
+  apDirection = dir;
+  const seg = $("apDirSeg");
+  seg.querySelector(".withdraw").classList.toggle("active", dir === "withdraw");
+  seg.querySelector(".deposit").classList.toggle("active", dir === "deposit");
+}
+
+async function openAutopayModal(){
+  if (!api() || !STATE.account) return;
+  initAutopayUI();
+  const r = await api().get_autopays(STATE.account.id);
+  if (r && r.ok) AUTOPAYS = r.autopays;
+  showApListScreen();
+  renderApList();
+  $("autopayModalScrim").classList.add("open");
+}
+function closeAutopayModal(){
+  $("autopayModalScrim").classList.remove("open");
+  editingAutopayId = null;
+  pendingDeleteAutopay = null;
+}
+function showApListScreen(){
+  $("apScreenList").style.display = "block";
+  $("apScreenForm").style.display = "none";
+  $("apScreenDelete").style.display = "none";
+}
+function showApFormScreen(){
+  $("apScreenList").style.display = "none";
+  $("apScreenForm").style.display = "block";
+  $("apScreenDelete").style.display = "none";
+}
+function showApDeleteScreen(){
+  $("apScreenList").style.display = "none";
+  $("apScreenForm").style.display = "none";
+  $("apScreenDelete").style.display = "block";
+}
+
+/* Only day numbers ever show here; the full anchor dates only surface once,
+   in the add/edit form, where the user picks the first occurrence. */
+function renderApList(){
+  const list = $("apList");
+  if (!AUTOPAYS.length){
+    list.innerHTML = `<div class="cat-row"><span class="cat-name" style="color:var(--text-faint);">No autopays yet.</span></div>`;
+    return;
+  }
+  list.innerHTML = AUTOPAYS.map(a => {
+    const amtCls = a.amount_cents < 0 ? "withdraw-amt" : "deposit-amt";
+    const catSpan = a.category ? `<span class="ap-row-cat">${esc(a.category)}</span>` : "";
+    return `<div class="ap-row" data-id="${a.id}">
+      <div class="ap-row-main">
+        <div class="ap-row-line1">
+          <span class="cat-name">${esc(a.payee)}</span>
+          <span class="amt ${amtCls}">${esc(fmtMoney(Math.abs(a.amount_cents)))}</span>
+        </div>
+        <div class="ap-row-line2">Appears in register on the ${ordinal(a.post_day)}, pays on the ${ordinal(a.pay_day)}.${catSpan}</div>
+      </div>
+      <span class="cat-row-actions">
+        <button class="icon-btn" title="Edit" onclick="startEditAutopay(${a.id})">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        </button>
+        <button class="icon-btn del" title="Delete" onclick="startDeleteAutopay(${a.id})">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+        </button>
+      </span>
+    </div>`;
+  }).join("");
+}
+
+/* Both dates default to today so a quick add-and-adjust flow needs only the
+   pay date touched, mirroring the register form's own today default. */
+function clearApFormFields(){
+  $("ap-payee").value = "";
+  $("ap-category").value = "";
+  $("ap-notes").value = "";
+  $("ap-amount").value = "";
+  $("ap-post-date").value = todayIso();
+  $("ap-pay-date").value = todayIso();
+  setApDirection("withdraw");
+}
+function openAddAutopayForm(){
+  editingAutopayId = null;
+  clearApFormFields();
+  $("ap-err").textContent = "";
+  $("ap-editing-note").style.display = "none";
+  $("ap-save-btn").textContent = "Add";
+  showApFormScreen();
+  $("ap-payee").focus();
+}
+function startEditAutopay(id){
+  const row = AUTOPAYS.find(a => a.id === id);
+  if (!row) return;
+  editingAutopayId = id;
+  $("ap-payee").value = row.payee;
+  $("ap-category").value = row.category || "";
+  $("ap-notes").value = row.notes || "";
+  $("ap-amount").value = (Math.abs(row.amount_cents) / 100).toFixed(2);
+  setApDirection(row.amount_cents < 0 ? "withdraw" : "deposit");
+  $("ap-post-date").value = row.next_post_date;
+  $("ap-pay-date").value = row.next_pay_date;
+  $("ap-err").textContent = "";
+  $("ap-editing-note").style.display = "block";
+  $("ap-save-btn").textContent = "Save";
+  showApFormScreen();
+  $("ap-payee").focus();
+}
+function cancelApForm(){
+  editingAutopayId = null;
+  showApListScreen();
+}
+async function submitAutopayForm(){
+  const errEl = $("ap-err");
+  errEl.textContent = "";
+  const payee = $("ap-payee").value.trim();
+  const category = $("ap-category").value.trim();
+  const notes = $("ap-notes").value.trim();
+  const amount = $("ap-amount").value.trim();
+  const postDate = $("ap-post-date").value;
+  const payDate = $("ap-pay-date").value;
+  if (!payee){ errEl.textContent = "Payee / description is required."; return; }
+  if (!amount){ errEl.textContent = "Amount is required."; return; }
+  if (!postDate || !payDate){ errEl.textContent = "Both dates are required."; return; }
+  if (postDate > payDate){ errEl.textContent = "The register date must be on or before the pay date."; return; }
+  if (!api()) return;
+  let r;
+  if (editingAutopayId){
+    r = await api().update_autopay(editingAutopayId, payee, category, notes, amount, apDirection, postDate, payDate);
+  } else {
+    r = await api().add_autopay(STATE.account.id, payee, category, notes, amount, apDirection, postDate, payDate);
+  }
+  if (!r || !r.ok){
+    errEl.textContent = (r && r.error) || "Something went wrong.";
+    return;
+  }
+  AUTOPAYS = r.autopays;
+  editingAutopayId = null;
+  showApListScreen();
+  renderApList();
+}
+
+function startDeleteAutopay(id){
+  const row = AUTOPAYS.find(a => a.id === id);
+  if (!row) return;
+  pendingDeleteAutopay = row;
+  $("ap-del-msg").innerHTML = `${esc(row.payee)}<span class="m-detail">Transactions it already added to the register stay put.</span>`;
+  showApDeleteScreen();
+}
+function cancelDeleteAutopay(){
+  pendingDeleteAutopay = null;
+  showApListScreen();
+}
+async function confirmDeleteAutopay(){
+  if (!pendingDeleteAutopay || !api()){ showApListScreen(); return; }
+  const id = pendingDeleteAutopay.id;
+  pendingDeleteAutopay = null;
+  const r = await api().delete_autopay(id);
+  if (r && r.ok) AUTOPAYS = r.autopays;
+  showApListScreen();
+  renderApList();
 }
 
 /* ---------- misc bridge helpers ---------- */
