@@ -61,18 +61,20 @@ body.light {
 *::-webkit-scrollbar-corner { background:transparent; }
 
 /* ---- header ---- */
+/* Equal 1fr side columns keep the balance block truly centered on the
+   window, not on the leftover space between the title and theme button. */
 header {
-  display:flex; align-items:flex-start; justify-content:space-between;
-  padding:18px 24px 12px; gap:18px; flex:0 0 auto;
+  display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
+  align-items:start; padding:18px 24px 12px; gap:18px; flex:0 0 auto;
 }
-.head-left { flex:0 0 auto; min-width:0; }
-.title { font-size:22px; font-weight:700; letter-spacing:.2px; white-space:nowrap; }
+.head-left { min-width:0; }
+.title { font-size:22px; font-weight:700; letter-spacing:.2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .byline { font-family:"JetBrains Mono", monospace; font-size:11.5px; color:var(--text-dim); margin-top:3px; }
 .gh-link { font-family:"JetBrains Mono", monospace; font-size:11.5px; color:var(--accent); cursor:pointer; text-decoration:none; }
 .gh-link:hover { text-decoration:underline; }
 
 /* ---- header center: account + big balance (the app's centerpiece) ---- */
-.head-center { flex:1; display:flex; flex-direction:column; align-items:center; min-width:0; padding-top:2px; }
+.head-center { display:flex; flex-direction:column; align-items:center; min-width:0; padding-top:2px; }
 .acct-row { display:flex; align-items:center; gap:8px; }
 .acct-trigger {
   display:flex; align-items:center; gap:5px; background:transparent; border:none;
@@ -109,17 +111,21 @@ header {
 .gear-btn svg { width:14px; height:14px; }
 .balance-caption {
   font-size:10px; font-weight:600; letter-spacing:.4px; text-transform:uppercase;
-  color:var(--text-faint); margin-top:4px;
+  color:var(--text-dim); margin-top:12px;
 }
 .balance-big {
   font-family:"Sora", sans-serif; font-weight:700; font-size:44px; line-height:1.1;
   color:var(--accent); letter-spacing:.2px; margin-top:2px;
 }
 .balance-big.neg { color:var(--red); }
-.balance-upcoming { font-size:13.5px; color:var(--text-dim); margin-top:2px; }
+/* Step the font down as the figure gains digits so a seven-plus-digit
+   balance never outgrows the centered block. */
+.balance-big.size-m { font-size:38px; }
+.balance-big.size-s { font-size:33px; }
+.balance-upcoming { font-size:13.5px; color:var(--text-faint); margin-top:2px; }
 .balance-upcoming .amt-upcoming.neg { color:var(--red); }
 
-.head-right { display:flex; align-items:flex-start; flex:0 0 auto; }
+.head-right { display:flex; align-items:flex-start; justify-self:end; }
 .theme-btn {
   background:transparent; border:1px solid var(--border-2); border-radius:var(--radius-sm);
   width:36px; height:36px; display:flex; align-items:center; justify-content:center;
@@ -573,9 +579,9 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
           </svg>
         </button>
       </div>
-      <div class="balance-caption">Today's balance</div>
+      <div class="balance-caption">Available balance</div>
       <div class="balance-big" id="balanceBig">$0.00</div>
-      <div class="balance-upcoming" id="balanceUpcoming" style="display:none;">After scheduled transactions: <span class="amt-upcoming" id="balanceUpcomingAmt"></span></div>
+      <div class="balance-upcoming"><em>(after all paid and pending transactions in the register)</em></div>
     </div>
     <div class="head-right">
       <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle theme">
@@ -1342,21 +1348,17 @@ async function refreshForActiveAccount(){
 function renderHeader(){
   if (!STATE.account) return;
   $("acctName").textContent = STATE.account.name;
-  const todayBal = STATE.account.today_balance_cents;
+  // The headline number is the balance after EVERY register entry, including
+  // pending future-dated ones: the register is ahead of the bank on purpose,
+  // so this is the honest "what can I actually spend". Today-only balance is
+  // visible in the register as the last undimmed row's rolling balance.
   const fullBal = STATE.account.current_balance_cents;
   const balEl = $("balanceBig");
-  balEl.textContent = fmtMoney(todayBal);
-  balEl.classList.toggle("neg", todayBal < 0);
-
-  const upcomingEl = $("balanceUpcoming");
-  if (todayBal !== fullBal){
-    const amtEl = $("balanceUpcomingAmt");
-    amtEl.textContent = fmtMoney(fullBal);
-    amtEl.classList.toggle("neg", fullBal < 0);
-    upcomingEl.style.display = "block";
-  } else {
-    upcomingEl.style.display = "none";
-  }
+  const txt = fmtMoney(fullBal);
+  balEl.textContent = txt;
+  balEl.classList.toggle("neg", fullBal < 0);
+  balEl.classList.toggle("size-m", txt.length >= 13 && txt.length < 15);
+  balEl.classList.toggle("size-s", txt.length >= 15);
 }
 
 /* ---------- entry form ---------- */
