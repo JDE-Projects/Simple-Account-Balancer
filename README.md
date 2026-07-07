@@ -32,11 +32,15 @@ If you enjoyed this project and would like to buy me a coffee, check out my [Ko-
   marked "variable": each posting arrives as an estimate, flagged in the
   register, that you confirm once you know the real amount.
 - Search, filtering, and shared date-range views (Last 7/14/30/90 days, or a
-  custom range).
+  custom range), plus an All | Withdraws | Deposits toggle for viewing one
+  side of the register. Filters only change what's shown: balances always
+  reflect the full register.
 - Reconcile view with cleared checkboxes and a discrepancy finder that hunts
   down the amount you're off by.
 - Multiple accounts with a simple switcher.
-- CSV export for any date range.
+- CSV export for any date range. Each file is self-identifying: the first
+  row names the account, the range, and the export date, so a printed copy
+  never loses its context.
 - Automatic rolling backups on launch and exit; backups live next to the
   app by default, or in any folder you choose.
 - Local only - your data never leaves the machine.
