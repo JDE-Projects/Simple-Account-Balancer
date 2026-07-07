@@ -1399,10 +1399,12 @@ class Api:
             return {"ok": False, "error": "Couldn't search for the discrepancy."}
 
     # --- CSV export -------------------------------------------------------------
-    def export_csv(self, account_id, from_date, to_date):
+    def export_csv(self, account_id, from_date, to_date, range_label=""):
         """Export the register to a CSV file via a native save dialog. An
         empty from_date and to_date together mean all history (no default
-        range applied here; that default is only for the register views)."""
+        range applied here; that default is only for the register views).
+        range_label is the preset token the UI picked (e.g. AllHistory,
+        Last30Days, CustomRange); it only affects the default filename."""
         try:
             account = self._get_account(account_id)
             if account is None:
@@ -1419,11 +1421,20 @@ class Api:
             if to_s:
                 rows = [r for r in rows if r["date"] <= to_s]
 
-            if all_history:
-                default_name = f"{account['name']} all history.csv"
-            else:
-                default_name = f"{account['name']} {from_s or 'start'} to {to_s or 'today'}.csv"
-            default_name = sanitize_filename(default_name)
+            expected_tokens = (
+                "AllHistory",
+                "Last7Days",
+                "Last14Days",
+                "Last30Days",
+                "Last90Days",
+                "CustomRange",
+            )
+            token = (range_label or "").strip()
+            if token not in expected_tokens:
+                token = "AllHistory" if all_history else "CustomRange"
+            default_name = sanitize_filename(
+                f"{account['name']}_Export_{token}_{datetime.date.today().strftime('%m%d%Y')}.csv"
+            )
 
             documents_dir = os.path.join(os.path.expanduser("~"), "Documents")
             start_dir = documents_dir if os.path.isdir(documents_dir) else app_dir()
@@ -1446,6 +1457,10 @@ class Api:
 
             with open(path, "w", encoding="utf-8-sig", newline="") as f:
                 writer = csv.writer(f)
+                range_text = "All history" if all_history else f"{from_s or 'start'} to {to_s or 'today'}"
+                writer.writerow(
+                    [account["name"], range_text, f"Exported {datetime.date.today().isoformat()}"]
+                )
                 writer.writerow(
                     ["Date", "Payee / Description", "Category", "Notes", "Withdraw", "Deposit", "Balance"]
                 )

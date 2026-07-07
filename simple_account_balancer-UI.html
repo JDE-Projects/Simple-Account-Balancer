@@ -162,6 +162,8 @@ body.light .icon-moon { display:block; }
 .seg button + button { border-left:1px solid var(--border-2); }
 .seg button.active.withdraw { background:color-mix(in srgb, var(--red) 22%, var(--panel-2)); color:var(--red); }
 .seg button.active.deposit { background:color-mix(in srgb, var(--green) 22%, var(--panel-2)); color:var(--green); }
+.seg.dir-seg button { padding:6.5px 10px; font-size:12px; }
+.seg button.active.all { background:color-mix(in srgb, var(--accent) 18%, var(--panel-2)); color:var(--accent); }
 
 button.btn {
   font-family:"Sora", sans-serif; font-size:13px; font-weight:500;
@@ -223,7 +225,7 @@ button.btn:disabled { opacity:.45; cursor:default; transform:none; }
 .toolbar-right { display:flex; align-items:center; gap:10px; }
 .toolbar-search { position:relative; display:flex; align-items:center; }
 .toolbar-search input {
-  font-family:"Sora", sans-serif; font-size:12.5px; color:var(--text); width:220px;
+  font-family:"Sora", sans-serif; font-size:12.5px; color:var(--text); width:260px;
   background:var(--panel-2); border:1px solid var(--border-2); border-radius:var(--radius-sm);
   padding:6px 28px 6px 10px; outline:none; transition:.15s;
 }
@@ -285,7 +287,12 @@ table.register tbody tr:hover .row-actions { opacity:1; }
 .empty-hint { padding:40px 24px; text-align:center; color:var(--text-faint); font-size:13.5px; }
 
 /* ---- view tabs (register / reconcile) ---- */
-.tabs-wrap { padding:0 24px 10px; flex:0 0 auto; }
+.tabs-wrap {
+  padding:0 24px 10px; flex:0 0 auto; display:flex; align-items:center;
+  justify-content:space-between; gap:14px;
+}
+/* register-only actions on the right of the tab strip; hidden in reconcile */
+.tab-actions { display:flex; align-items:center; gap:10px; }
 .view-tabs { display:inline-flex; border:1px solid var(--border-2); border-radius:var(--radius-sm); overflow:hidden; background:var(--panel-2); }
 .view-tabs button {
   font-family:"Sora", sans-serif; font-size:12px; font-weight:600; padding:7px 16px;
@@ -617,6 +624,10 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
       <button type="button" class="active" id="tabRegisterBtn" onclick="switchView('register')">Register</button>
       <button type="button" id="tabReconcileBtn" onclick="switchView('reconcile')">Reconcile</button>
     </div>
+    <div class="tab-actions" id="tabActions">
+      <button type="button" class="btn" onclick="openAutopayModal()">Autopays</button>
+      <button type="button" class="btn" onclick="openExportModal()">Export CSV</button>
+    </div>
   </div>
 
   <!-- register view -->
@@ -650,14 +661,17 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
            title="Variable autopays with estimated amounts to confirm against your bank statement. Click to jump to them."
            onclick="scrollToFirstEstimate()"></div>
       <div class="toolbar-right">
+        <div class="seg dir-seg" id="dirFilterSeg">
+          <button type="button" class="all active" onclick="setDirFilter('all')">All</button>
+          <button type="button" class="withdraw" onclick="setDirFilter('withdraw')">Withdraws</button>
+          <button type="button" class="deposit" onclick="setDirFilter('deposit')">Deposits</button>
+        </div>
         <div class="toolbar-search">
           <input type="text" id="searchInput" placeholder="Search payee, category, notes" autocomplete="off" oninput="onSearchInput()">
           <button class="search-clear" id="searchClear" style="display:none;" title="Clear search" onclick="clearSearch()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
           </button>
         </div>
-        <button type="button" class="btn" onclick="openAutopayModal()">Autopays</button>
-        <button type="button" class="btn" onclick="openExportModal()">Export CSV</button>
       </div>
     </div>
 
@@ -1068,6 +1082,7 @@ let CATEGORIES = [];
 let PAYEES = [];
 let currentRange = { from:null, to:null };
 let currentSearch = "";
+let currentDirFilter = "all";
 let searchDebounceTimer = null;
 let registerUIInit = false;
 let editingCategoryId = null;
@@ -1083,7 +1098,7 @@ let finderOpen = false;
 
 /* ---------- Phase 6: account switcher, CSV export, backups, restore ---------- */
 let accountMenuOpen = false;
-let exportRange = { from:null, to:null };
+let exportRange = { from:null, to:null, label:null };
 let pendingDeleteAccountName = null;
 let RESTORE = { backups: [], preview: null, pendingFilename: null };
 
@@ -1427,17 +1442,26 @@ function renderRegister(){
   const table = $("registerTable");
   const body = $("registerBody");
   const emptyHint = $("emptyHint");
-  if (!TX.length){
+  const rows = currentDirFilter === "all" ? TX
+    : TX.filter(r => currentDirFilter === "withdraw" ? r.amount_cents < 0 : r.amount_cents > 0);
+  if (!rows.length){
     table.style.display = "none";
-    emptyHint.textContent = currentSearch
-      ? `No matches for '${currentSearch}' in this range.`
-      : "No transactions in this range.";
+    const word = currentDirFilter === "withdraw" ? "withdraws" : "deposits";
+    if (currentDirFilter !== "all" && currentSearch){
+      emptyHint.textContent = `No ${word} matching '${currentSearch}' in this range.`;
+    } else if (currentDirFilter !== "all"){
+      emptyHint.textContent = `No ${word} in this range.`;
+    } else if (currentSearch){
+      emptyHint.textContent = `No matches for '${currentSearch}' in this range.`;
+    } else {
+      emptyHint.textContent = "No transactions in this range.";
+    }
     emptyHint.style.display = "block";
     return;
   }
   emptyHint.style.display = "none";
   table.style.display = "table";
-  body.innerHTML = TX.map(rowHtml).join("");
+  body.innerHTML = rows.map(rowHtml).join("");
   const wrap = $("tableWrap");
   wrap.scrollTop = wrap.scrollHeight;
 }
@@ -1454,8 +1478,9 @@ function rowHtml(row){
   const trCls = row.date > todayIso() ? "future" : "";
   // The reorder affordance only makes sense when a day actually has more
   // than one row to reorder, and only against the unfiltered day contents,
-  // so it is hidden entirely while a search is narrowing what's visible.
-  const sameDayCount = !currentSearch ? TX.filter(r => r.date === row.date).length : 0;
+  // so it is hidden entirely while a search or the direction filter is
+  // narrowing what's visible.
+  const sameDayCount = (!currentSearch && currentDirFilter === "all") ? TX.filter(r => r.date === row.date).length : 0;
   const reorderBtn = sameDayCount >= 2
     ? `<button class="icon-btn" title="Reorder this day" onclick="openReorderDay('${row.date}')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v16"/><path d="M4 7l3-3 3 3"/><path d="M17 20V4"/><path d="M14 17l3 3 3-3"/></svg>
@@ -1635,7 +1660,15 @@ async function loadRegister(){
   renderEstimateNotice();
 }
 
-/* ---------- toolbar: search ---------- */
+/* ---------- toolbar: search + direction filter ---------- */
+function setDirFilter(dir){
+  currentDirFilter = dir;
+  const seg = $("dirFilterSeg");
+  seg.querySelector(".all").classList.toggle("active", dir === "all");
+  seg.querySelector(".withdraw").classList.toggle("active", dir === "withdraw");
+  seg.querySelector(".deposit").classList.toggle("active", dir === "deposit");
+  renderRegister();
+}
 function onSearchInput(){
   const val = $("searchInput").value;
   $("searchClear").style.display = val ? "flex" : "none";
@@ -1710,6 +1743,7 @@ function switchView(view){
   $("reconcileWrap").style.display = view === "reconcile" ? "flex" : "none";
   $("tabRegisterBtn").classList.toggle("active", view === "register");
   $("tabReconcileBtn").classList.toggle("active", view === "reconcile");
+  $("tabActions").style.display = view === "register" ? "flex" : "none";
   if (view === "reconcile"){
     loadReconcile(); // data may have changed in the register, always refresh
   } else {
@@ -2288,7 +2322,7 @@ function openExportModal(){
   $("export-btn").disabled = false;
   $("export-btn").textContent = "Export";
   createRangeControl($("exportRangeSlot"), (range) => {
-    exportRange = { from: range.from, to: range.to };
+    exportRange = { from: range.from, to: range.to, label: range.label };
   }, { allowAll: true });
   $("exportModalScrim").classList.add("open");
 }
@@ -2301,7 +2335,11 @@ async function runExport(){
   if (!api() || !STATE.account) return;
   const btn = $("export-btn");
   btn.disabled = true;
-  const r = await api().export_csv(STATE.account.id, exportRange.from, exportRange.to);
+  const label = exportRange.label || "";
+  const rangeToken = label === "All history" ? "AllHistory"
+    : label.startsWith("Last ") ? label.replace(/\s+/g, "")
+    : "CustomRange";
+  const r = await api().export_csv(STATE.account.id, exportRange.from, exportRange.to, rangeToken);
   btn.disabled = false;
   if (!r || !r.ok){
     errEl.textContent = (r && r.error) || "Something went wrong.";
@@ -2338,11 +2376,12 @@ async function createAccount(){
 
 function showRegisterView(){
   $("firstrunWrap").style.display = "none";
-  $("viewTabs").style.display = "block";
+  $("viewTabs").style.display = "flex";
   $("registerWrap").style.display = "flex";
   $("reconcileWrap").style.display = "none";
   $("tabRegisterBtn").classList.add("active");
   $("tabReconcileBtn").classList.remove("active");
+  $("tabActions").style.display = "flex";
   currentView = "register";
   $("headCenter").style.display = "flex";
   renderHeader();
