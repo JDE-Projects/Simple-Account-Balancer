@@ -42,7 +42,7 @@ BACKUP_KEEP = 5
 BACKUP_KEEP_MIN = 1
 BACKUP_KEEP_MAX = 50
 PRERESTORE_KEEP = 3
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DEFAULT_RANGE_DAYS = 30
 
 # Regular backups: balancer_YYYYMMDD_HHMMSS.db
@@ -290,6 +290,7 @@ def open_db(path: str) -> sqlite3.Connection:
             amount_cents INTEGER NOT NULL,
             cleared INTEGER NOT NULL DEFAULT 0,
             estimated INTEGER NOT NULL DEFAULT 0,
+            sort_key INTEGER,
             created_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS categories (
@@ -330,6 +331,14 @@ def open_db(path: str) -> sqlite3.Connection:
     transaction_cols = {r["name"] for r in conn.execute("PRAGMA table_info(transactions)")}
     if "estimated" not in transaction_cols:
         conn.execute("ALTER TABLE transactions ADD COLUMN estimated INTEGER NOT NULL DEFAULT 0")
+
+    # Migration for day-scoped reordering: sort_key breaks ties within a day
+    # for transactions that share a date. Backfilled from id so existing rows
+    # keep their current insertion-order position until the user reorders them.
+    if "sort_key" not in transaction_cols:
+        conn.execute("ALTER TABLE transactions ADD COLUMN sort_key INTEGER")
+    conn.execute("UPDATE transactions SET sort_key = id WHERE sort_key IS NULL")
+
     autopay_cols = {r["name"] for r in conn.execute("PRAGMA table_info(autopays)")}
     if "is_variable" not in autopay_cols:
         conn.execute("ALTER TABLE autopays ADD COLUMN is_variable INTEGER NOT NULL DEFAULT 0")
@@ -673,7 +682,7 @@ class Api:
             cur = self._conn.cursor()
             rows = cur.execute(
                 "SELECT payee, category FROM transactions WHERE account_id=? "
-                "ORDER BY date DESC, id DESC",
+                "ORDER BY date DESC, sort_key DESC, id DESC",
                 (account["id"],),
             ).fetchall()
             seen = set()
@@ -696,7 +705,7 @@ class Api:
         cur = self._conn.cursor()
         all_rows = cur.execute(
             "SELECT id, date, payee, category, notes, amount_cents, cleared, estimated "
-            "FROM transactions WHERE account_id=? ORDER BY date ASC, id ASC",
+            "FROM transactions WHERE account_id=? ORDER BY date ASC, sort_key ASC, id ASC",
             (account["id"],),
         ).fetchall()
         running = account["starting_balance_cents"]
@@ -799,6 +808,10 @@ class Api:
                 "VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
                 (account["id"], date_s, payee_s, category_s, notes_s, signed, now),
             )
+            cur.execute(
+                "UPDATE transactions SET sort_key=? WHERE id=?",
+                (cur.lastrowid, cur.lastrowid),
+            )
             if category_s:
                 cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
             self._conn.commit()
@@ -811,7 +824,7 @@ class Api:
     def update_transaction(self, transaction_id, date, payee, category, notes, amount, direction):
         try:
             cur = self._conn.cursor()
-            row = cur.execute("SELECT id FROM transactions WHERE id=?", (transaction_id,)).fetchone()
+            row = cur.execute("SELECT id, date FROM transactions WHERE id=?", (transaction_id,)).fetchone()
             if row is None:
                 return {"ok": False, "error": "That transaction no longer exists."}
             date_s, err = parse_iso_date(date)
@@ -828,11 +841,21 @@ class Api:
             signed = -cents if direction == "withdraw" else cents
             category_s = (category or "").strip()
             notes_s = (notes or "").strip()
-            cur.execute(
-                "UPDATE transactions SET date=?, payee=?, category=?, notes=?, amount_cents=? "
-                "WHERE id=?",
-                (date_s, payee_s, category_s, notes_s, signed, transaction_id),
-            )
+            # A date change moves the transaction to a different day, so its
+            # sort_key is reset to its id, landing it by the old insertion-order
+            # rule in the target day rather than carrying a stale position.
+            if date_s != row["date"]:
+                cur.execute(
+                    "UPDATE transactions SET date=?, payee=?, category=?, notes=?, amount_cents=?, "
+                    "sort_key=id WHERE id=?",
+                    (date_s, payee_s, category_s, notes_s, signed, transaction_id),
+                )
+            else:
+                cur.execute(
+                    "UPDATE transactions SET date=?, payee=?, category=?, notes=?, amount_cents=? "
+                    "WHERE id=?",
+                    (date_s, payee_s, category_s, notes_s, signed, transaction_id),
+                )
             if category_s:
                 cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
             self._conn.commit()
@@ -855,6 +878,43 @@ class Api:
         except Exception as e:
             self.log(f"delete_transaction failed: {e}")
             return {"ok": False, "error": "Couldn't delete the transaction."}
+
+    def reorder_transactions(self, account_id, date, ordered_ids):
+        """Set the within-day display order for one date's transactions. The
+        caller supplies the full set of that day's ids in the new order;
+        sort_key values 1..n never collide across days since date sorts
+        first, so this never needs to touch any other day's rows."""
+        try:
+            account = self._get_account(account_id)
+            if account is None:
+                return {"ok": False, "error": "No account exists yet."}
+            date_s, err = parse_iso_date(date)
+            if err:
+                return {"ok": False, "error": err}
+            cur = self._conn.cursor()
+            day_rows = cur.execute(
+                "SELECT id FROM transactions WHERE account_id=? AND date=? "
+                "ORDER BY sort_key ASC, id ASC",
+                (account["id"], date_s),
+            ).fetchall()
+            day_ids = {r["id"] for r in day_rows}
+            ordered = list(ordered_ids or [])
+            if len(ordered) != len(set(ordered)) or set(ordered) != day_ids:
+                return {
+                    "ok": False,
+                    "error": "That day's transactions changed. Close and reopen the reorder window.",
+                }
+            for position, transaction_id in enumerate(ordered, start=1):
+                cur.execute(
+                    "UPDATE transactions SET sort_key=? WHERE id=?",
+                    (position, transaction_id),
+                )
+            self._conn.commit()
+            self.log(f"Reordered {len(ordered)} transaction(s) on {date_s}")
+            return {"ok": True}
+        except Exception as e:
+            self.log(f"reorder_transactions failed: {e}")
+            return {"ok": False, "error": "Couldn't reorder the transactions."}
 
     def confirm_estimated_amount(self, transaction_id, amount):
         """Correct an estimated autopay posting's amount. Only the amount and
@@ -1089,6 +1149,10 @@ class Api:
                             rule["notes"], rule["amount_cents"], 1 if rule["is_variable"] else 0, now,
                         ),
                     )
+                    cur.execute(
+                        "UPDATE transactions SET sort_key=? WHERE id=?",
+                        (cur.lastrowid, cur.lastrowid),
+                    )
                     posted_count += 1
                     next_pay_date = advance_one_month(next_pay_date, rule["pay_day"])
                     next_post_date = advance_one_month(next_post_date, rule["post_day"])
@@ -1170,7 +1234,7 @@ class Api:
             if to_s:
                 query += " AND date<=?"
                 params.append(to_s)
-            query += " ORDER BY date ASC, id ASC"
+            query += " ORDER BY date ASC, sort_key ASC, id ASC"
             rows = cur.execute(query, params).fetchall()
             payload_rows = [
                 {
@@ -1244,7 +1308,7 @@ class Api:
             # 1. exact: full history, any transaction whose absolute amount matches.
             exact_rows = cur.execute(
                 "SELECT id, date, payee, amount_cents, cleared FROM transactions "
-                "WHERE account_id=? AND ABS(amount_cents)=? ORDER BY date ASC, id ASC",
+                "WHERE account_id=? AND ABS(amount_cents)=? ORDER BY date ASC, sort_key ASC, id ASC",
                 (account["id"], diff_cents),
             ).fetchall()
             exact = [row_dict(r) for r in exact_rows]
@@ -1254,7 +1318,7 @@ class Api:
             if diff_cents % 2 == 0:
                 half_rows = cur.execute(
                     "SELECT id, date, payee, amount_cents, cleared FROM transactions "
-                    "WHERE account_id=? AND ABS(amount_cents)=? ORDER BY date ASC, id ASC",
+                    "WHERE account_id=? AND ABS(amount_cents)=? ORDER BY date ASC, sort_key ASC, id ASC",
                     (account["id"], diff_cents // 2),
                 ).fetchall()
                 half = [row_dict(r) for r in half_rows]
@@ -1274,7 +1338,7 @@ class Api:
             if to_s:
                 query += " AND date<=?"
                 params.append(to_s)
-            query += " ORDER BY date ASC, id ASC"
+            query += " ORDER BY date ASC, sort_key ASC, id ASC"
             range_rows = cur.execute(query, params).fetchall()
 
             if len(range_rows) > 300:

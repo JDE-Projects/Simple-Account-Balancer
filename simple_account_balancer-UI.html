@@ -471,6 +471,18 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
 }
 .ap-row-cat { margin-left:8px; }
 
+/* ---- reorder day modal ---- */
+.reorder-modal { width:420px; }
+.reorder-date { font-size:12.5px; color:var(--text-dim); margin:-10px 0 12px; }
+.reorder-list { max-height:320px; overflow-y:auto; margin:0 0 4px; border-top:1px solid var(--border); }
+.reorder-row { display:flex; align-items:center; gap:8px; padding:8px 2px; border-bottom:1px solid var(--border); }
+.reorder-row-payee {
+  flex:1; min-width:0; font-size:13px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.reorder-row-actions { display:flex; gap:2px; flex:0 0 auto; }
+.icon-btn:disabled { opacity:.35; cursor:default; }
+.icon-btn:disabled:hover { color:var(--text-faint); background:transparent; }
+
 /* ---- bottom bar ---- */
 .bottom-bar {
   flex:0 0 auto; height:44px;
@@ -993,6 +1005,20 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
     </div>
   </div>
 
+  <!-- reorder day modal -->
+  <div class="modal-scrim" id="reorderModalScrim">
+    <div class="modal reorder-modal">
+      <h3>Reorder transactions</h3>
+      <div class="reorder-date" id="reorder-date"></div>
+      <div class="reorder-list" id="reorderList"></div>
+      <div class="err" id="reorder-err"></div>
+      <div class="m-foot">
+        <button class="btn" onclick="closeReorderModal()">Cancel</button>
+        <button class="btn primary" onclick="saveReorder()">Save</button>
+      </div>
+    </div>
+  </div>
+
   <div class="bottom-bar">
     <div class="bar-left">
       <label class="dbg-toggle" title="Write a timestamped debug log next to the app. It records actions and errors only, never payees, amounts, or balances.">
@@ -1034,6 +1060,8 @@ let direction = "withdraw";
 let editingId = null;
 let pendingDeleteId = null;
 let pendingConfirmEstimateId = null;
+let reorderDate = null;
+let reorderRows = [];
 
 /* ---------- Phase 4: categories, payees, range + search ---------- */
 let CATEGORIES = [];
@@ -1424,6 +1452,15 @@ function rowHtml(row){
     ? `${estFlag}<span class="amt deposit-amt">${esc(fmtMoney(row.amount_cents))}</span>` : "";
   const balCls = row.balance_cents < 0 ? "amt balance-amt neg" : "amt balance-amt";
   const trCls = row.date > todayIso() ? "future" : "";
+  // The reorder affordance only makes sense when a day actually has more
+  // than one row to reorder, and only against the unfiltered day contents,
+  // so it is hidden entirely while a search is narrowing what's visible.
+  const sameDayCount = !currentSearch ? TX.filter(r => r.date === row.date).length : 0;
+  const reorderBtn = sameDayCount >= 2
+    ? `<button class="icon-btn" title="Reorder this day" onclick="openReorderDay('${row.date}')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v16"/><path d="M4 7l3-3 3 3"/><path d="M17 20V4"/><path d="M14 17l3 3 3-3"/></svg>
+        </button>`
+    : "";
   return `<tr data-id="${row.id}" class="${trCls}">
     <td class="col-date">${esc(row.date)}</td>
     <td class="col-payee" title="${esc(row.payee)}">${esc(row.payee)}</td>
@@ -1434,6 +1471,7 @@ function rowHtml(row){
     <td class="num"><span class="${balCls}">${esc(fmtMoney(row.balance_cents))}</span></td>
     <td class="num">
       <span class="row-actions">
+        ${reorderBtn}
         <button class="icon-btn" title="Edit" onclick="editRow(${row.id})">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
         </button>
@@ -1472,6 +1510,64 @@ async function confirmEstimateAmount(){
     return;
   }
   closeConfirmEstimateModal();
+  await loadRegister();
+}
+
+/* ---------- day-scoped reorder ---------- */
+function openReorderDay(date){
+  reorderDate = date;
+  reorderRows = TX.filter(r => r.date === date).map(r => ({
+    id: r.id, payee: r.payee, amount_cents: r.amount_cents,
+  }));
+  $("reorder-date").textContent = date;
+  $("reorder-err").textContent = "";
+  renderReorderList();
+  $("reorderModalScrim").classList.add("open");
+}
+function closeReorderModal(){
+  $("reorderModalScrim").classList.remove("open");
+  reorderDate = null;
+  reorderRows = [];
+}
+function renderReorderList(){
+  const list = $("reorderList");
+  list.innerHTML = reorderRows.map((r, i) => {
+    const amtCls = r.amount_cents < 0 ? "withdraw-amt" : "deposit-amt";
+    const upDisabled = i === 0 ? "disabled" : "";
+    const downDisabled = i === reorderRows.length - 1 ? "disabled" : "";
+    return `<div class="reorder-row">
+      <span class="reorder-row-payee" title="${esc(r.payee)}">${esc(r.payee)}</span>
+      <span class="amt ${amtCls}">${esc(fmtMoney(Math.abs(r.amount_cents)))}</span>
+      <span class="reorder-row-actions">
+        <button class="icon-btn" title="Move up" ${upDisabled} onclick="moveReorderRow(${i}, -1)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+        </button>
+        <button class="icon-btn" title="Move down" ${downDisabled} onclick="moveReorderRow(${i}, 1)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>
+        </button>
+      </span>
+    </div>`;
+  }).join("");
+}
+function moveReorderRow(index, delta){
+  const target = index + delta;
+  if (target < 0 || target >= reorderRows.length) return;
+  const tmp = reorderRows[index];
+  reorderRows[index] = reorderRows[target];
+  reorderRows[target] = tmp;
+  renderReorderList();
+}
+async function saveReorder(){
+  if (!api() || !reorderDate) return;
+  const errEl = $("reorder-err");
+  errEl.textContent = "";
+  const orderedIds = reorderRows.map(r => r.id);
+  const r = await api().reorder_transactions(STATE.account.id, reorderDate, orderedIds);
+  if (!r || !r.ok){
+    errEl.textContent = (r && r.error) || "Something went wrong.";
+    return;
+  }
+  closeReorderModal();
   await loadRegister();
 }
 
