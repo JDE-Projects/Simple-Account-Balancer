@@ -22,6 +22,10 @@ If you enjoyed this project and would like to buy me a coffee, check out my [Ko-
   name; recalculates automatically for out-of-order or backdated entries, with
   an "After upcoming" line whenever future-dated entries exist.
 - Quick entry with payee autocomplete and freely editable categories.
+- Same-day entries can be reordered: transactions that share a date get a
+  reorder button that opens a small dialog for just that day, so a forgotten
+  entry can be slotted into place. Within-day order never changes the day's
+  ending balance.
 - Autopays: catalog a recurring bill or deposit once and the app posts it to
   the register automatically each month, appearing on the day you choose and
   shown dimmed until its date arrives. Bills that change month to month can be
