@@ -18,9 +18,11 @@ If you enjoyed this project and would like to buy me a coffee, check out my [Ko-
 </p>
 
 ## Highlights
-- Today's balance front and center in the header, next to the active account
-  name; recalculates automatically for out-of-order or backdated entries, with
-  an "After upcoming" line whenever future-dated entries exist.
+- Available balance front and center in the header, next to the active
+  account name: the balance after every transaction in the register,
+  including pending future-dated entries, so the big number is always what
+  you can actually spend. Recalculates automatically for out-of-order or
+  backdated entries.
 - Quick entry with payee autocomplete and freely editable categories.
 - Same-day entries can be reordered: transactions that share a date get a
   reorder button that opens a small dialog for just that day, so a forgotten
