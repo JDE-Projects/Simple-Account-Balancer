@@ -18,21 +18,16 @@ If you enjoyed this project and would like to buy me a coffee, check out my [Ko-
 </p>
 
 ## Highlights
-- Available balance front and center in the header, next to the active
-  account name: the balance after every transaction in the register,
-  including pending future-dated entries, so the big number is always what
-  you can actually spend. Recalculates automatically for out-of-order or
-  backdated entries.
+- Available balance in the header reflects every transaction in the register,
+  including pending future-dated entries, and recalculates automatically for
+  out-of-order or backdated entries.
 - Quick entry with payee autocomplete and freely editable categories.
-- Same-day entries can be reordered: transactions that share a date get a
-  reorder button that opens a small dialog for just that day, so a forgotten
-  entry can be slotted into place. Within-day order never changes the day's
-  ending balance.
-- Autopays: catalog a recurring bill or deposit once and the app posts it to
-  the register automatically each month, appearing on the day you choose and
-  shown dimmed until its date arrives. Bills that change month to month can be
-  marked "variable": each posting arrives as an estimate, flagged in the
-  register, that you confirm once you know the real amount.
+- Same-day entries can be reordered: transactions sharing a date get a
+  reorder button, so a forgotten entry can be slotted into place. Within-day
+  order never changes the day's ending balance.
+- Autopays: catalog a recurring bill or deposit once and the app posts it
+  automatically each month. Bills that change month to month can be marked
+  "variable" so each posting arrives as an estimate you confirm.
 - Search, filtering, and shared date-range views (Last 7/14/30/90 days, or a
   custom range), plus an All | Withdraws | Deposits toggle for viewing one
   side of the register. Filters only change what's shown: balances always
@@ -41,8 +36,7 @@ If you enjoyed this project and would like to buy me a coffee, check out my [Ko-
   down the amount you're off by.
 - Multiple accounts with a simple switcher.
 - CSV export for any date range. Each file is self-identifying: the first
-  row names the account, the range, and the export date, so a printed copy
-  never loses its context.
+  row names the account, the range, and the export date.
 - Automatic rolling backups on launch and exit; backups live next to the
   app by default, or in any folder you choose.
 - Local only - your data never leaves the machine.
@@ -56,7 +50,7 @@ If you enjoyed this project and would like to buy me a coffee, check out my [Ko-
   `simple_account_balancer-UI.html`.
 
 ## Download and run
-Two ways to get it from the Releases page - pick one:
+Two ways to get it from the [Releases](../../releases) page - pick one:
 - **Installer (recommended):** download `SimpleAccountBalancer-vX.Y.Z-setup.exe` and
   run it. Installs the app, adds a Start menu shortcut, and can be removed later
   from Add or Remove Programs. Installs just for you by default (no admin); you can
@@ -67,9 +61,18 @@ Two ways to get it from the Releases page - pick one:
 Windows only, no Python or setup required. Unsigned, so SmartScreen may warn the
 first time: More info > Run anyway.
 
+## Updating
+
+Simple Account Balancer doesn't update itself. The bottom bar has a **Check for updates** button that tells you when a newer release is out; when it does, get the new version from the [Releases](../../releases) page the same way you first installed it.
+
+- **Installer:** download the new `SimpleAccountBalancer-vX.Y.Z-setup.exe` and run it. It installs over your current copy and keeps your database, backups, and settings.
+- **Portable .zip:** download and extract the new `SimpleAccountBalancer-vX.Y.Z.zip`. Copy `simple_account_balancer.db`, the `backups` folder, and `simple_account_balancer.pref` from the old folder into the new one to keep your data and settings.
+
+There are no stored secrets, so that's all you need to carry over.
+
 ## Verify this download (optional)
-This release was built on GitHub from this public source - not on a personal
-machine - and is signed with a build-provenance attestation. To confirm a
+This release was built on GitHub from this public source, not on a personal
+machine, and is signed with a build-provenance attestation. To confirm your
 download is genuine, install the [GitHub CLI](https://cli.github.com) and run:
 
 ```
@@ -81,15 +84,6 @@ gh attestation verify SimpleAccountBalancer-vX.Y.Z.zip \
 A `Verification succeeded!` line means the file was built by the published
 pipeline from this repo. You can also check the file against the published
 `.sha256`.
-
-## Updating
-
-Simple Account Balancer doesn't update itself. The bottom bar has a **Check for updates** button that tells you when a newer release is out; when it does, get the new version from the [Releases](../../releases) page the same way you first installed it.
-
-- **Installer:** download the new `SimpleAccountBalancer-vX.Y.Z-setup.exe` and run it. It installs over your current copy and keeps your database, backups, and settings.
-- **Portable .zip:** download and extract the new `SimpleAccountBalancer-vX.Y.Z.zip`. Copy `simple_account_balancer.db`, the `backups` folder, and `simple_account_balancer.pref` from the old folder into the new one to keep your data and settings.
-
-There are no stored secrets, so that's all you need to carry over.
 
 ## Build from source (optional)
 - Python 3 on PATH.
@@ -128,7 +122,8 @@ There are no stored secrets, so that's all you need to carry over.
 ## A note on how this was built
 This project was built with AI assistance. The design decisions, feature
 direction, and real-world testing were directed by me. The code was written
-and revised with an AI assistant against that direction.
+and revised with an AI assistant against that direction. Treat it like any
+community tool: review and test it before relying on it.
 
 ## License
 Released under the PolyForm Noncommercial License 1.0.0 (see [LICENSE](LICENSE)).
