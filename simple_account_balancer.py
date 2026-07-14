@@ -45,6 +45,11 @@ PRERESTORE_KEEP = 3
 SCHEMA_VERSION = 3
 DEFAULT_RANGE_DAYS = 30
 
+# Enforced window minimum; the geometry-restore clamp and both create_window
+# calls must agree, so they all read these.
+MIN_WINDOW_W = 680
+MIN_WINDOW_H = 650
+
 # Regular backups: balancer_YYYYMMDD_HHMMSS.db
 # Pre-restore safety backups: balancer_prerestore_YYYYMMDD_HHMMSS.db
 # The optional "prerestore_" is captured as part of the match but not its own
@@ -199,8 +204,8 @@ def _restore_geometry() -> dict:
         for v in (x, y, width, height):
             if not isinstance(v, int) or isinstance(v, bool):
                 return {}
-        width = max(950, min(width, 10000))
-        height = max(650, min(height, 10000))
+        width = max(MIN_WINDOW_W, min(width, 10000))
+        height = max(MIN_WINDOW_H, min(height, 10000))
 
         # Confirm a point inside the title bar area is still on a connected
         # monitor; MonitorFromPoint returns NULL if it isn't (for example the
@@ -2098,7 +2103,7 @@ def main():
             y=geo["y"],
             width=geo["width"],
             height=geo["height"],
-            min_size=(950, 650),
+            min_size=(MIN_WINDOW_W, MIN_WINDOW_H),
             background_color="#0a0e14",
         )
     else:
@@ -2108,7 +2113,7 @@ def main():
             js_api=api,
             width=1150,
             height=760,
-            min_size=(950, 650),
+            min_size=(MIN_WINDOW_W, MIN_WINDOW_H),
             background_color="#0a0e14",
         )
     api.set_window(win)

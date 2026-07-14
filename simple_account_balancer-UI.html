@@ -68,7 +68,7 @@ header {
   align-items:start; padding:18px 24px 12px; gap:18px; flex:0 0 auto;
 }
 .head-left { min-width:0; }
-.title { font-size:22px; font-weight:700; letter-spacing:.2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.title { font-size:22px; font-weight:700; letter-spacing:.2px; }
 .byline { font-family:"JetBrains Mono", monospace; font-size:11.5px; color:var(--text-dim); margin-top:3px; }
 .gh-link { font-family:"JetBrains Mono", monospace; font-size:11.5px; color:var(--accent); cursor:pointer; text-decoration:none; }
 .gh-link:hover { text-decoration:underline; }
@@ -262,7 +262,7 @@ table.register tbody tr.future { opacity:.55; }
 table.register tbody tr.future:hover { opacity:.9; }
 .col-date { white-space:nowrap; font-family:"JetBrains Mono", monospace; font-size:12px; color:var(--text-dim); }
 .col-payee { max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.col-category, .col-notes { color:var(--text-dim); max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+td.col-category, td.col-notes { color:var(--text-dim); max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .amt { font-family:"JetBrains Mono", monospace; font-size:13px; white-space:nowrap; }
 .amt.withdraw-amt { color:var(--red); }
 .amt.deposit-amt { color:var(--green); }
@@ -557,14 +557,46 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
 #updateBtn:hover { border-color:var(--accent); color:var(--text); transform:translateY(-1px); }
 #updateBtn:active { transform:translateY(0); }
 #updateBtn:disabled { opacity:.38; cursor:not-allowed; transform:none; }
+
+/* ---- two-row entry form. The grid placements are inert while the form is
+   flex; they engage when .entry-form goes grid, which happens below 1050px
+   (its single row wraps below a 1042px viewport, measured) and whenever a
+   transaction is being edited (the extra editing controls otherwise wrap
+   piecemeal at any width). ---- */
+.fld-date { grid-column:1; grid-row:1; }
+.grow-payee { grid-column:2; grid-row:1; }
+.fld-amount { grid-column:3; grid-row:1; }
+.fld-type { grid-column:4 / span 2; grid-row:1; }
+.fld-category { grid-column:1; grid-row:2; }
+.grow-notes { grid-column:2; grid-row:2; }
+.editing-note { grid-column:3; grid-row:2; }
+#entrySubmitBtn { grid-column:4; grid-row:2; }
+#entryCancelBtn { grid-column:5; grid-row:2; }
+.fld-type .seg { align-self:flex-start; }
+.entry-form.editing { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto auto; align-items:end; }
+@media (max-width: 1050px) {
+  .entry-form { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto auto; align-items:end; }
+}
+/* ---- narrower still: drop low-priority columns, tighten margins, let the title wrap ---- */
+@media (max-width: 820px) {
+  .col-notes { display:none; }
+  .title { font-size:16px; }
+  .entry-wrap, .toolbar { padding-left:16px; padding-right:16px; }
+  .table-wrap { padding:0 16px 18px; }
+  table.register thead th, table.register tbody td { padding:8px 6px; }
+  .col-payee { max-width:170px; }
+  .col-category { max-width:110px; }
+}
+@media (max-width: 720px) {
+  .col-category { display:none; }
+}
 </style>
 </head>
 <body>
   <header>
     <div class="head-left">
       <div class="title">Simple Account Balancer</div>
-      <div class="byline">by JDE-Projects</div>
-      <a class="gh-link" onclick="openUrl('https://github.com/JDE-Projects')">github.com/JDE-Projects</a>
+      <div class="byline">by <a class="gh-link" onclick="openUrl('https://github.com/JDE-Projects')">JDE-Projects</a></div>
     </div>
     <div class="head-center" id="headCenter" style="display:none;">
       <div class="acct-row">
@@ -640,12 +672,12 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
   <div id="registerWrap" style="display:none; flex:1; min-height:0; flex-direction:column;">
     <div class="entry-wrap">
       <form class="entry-form" id="entryForm" onsubmit="event.preventDefault(); submitEntry();">
-        <div class="fld-mini"><label>Date</label><input id="f-date" type="date" required></div>
+        <div class="fld-mini fld-date"><label>Date</label><input id="f-date" type="date" required></div>
         <div class="fld-mini grow-payee"><label>Payee / description</label><input id="f-payee" type="text" placeholder="Payee" required autocomplete="off"></div>
-        <div class="fld-mini"><label>Category</label><input id="f-category" type="text" placeholder="Optional" autocomplete="off"></div>
+        <div class="fld-mini fld-category"><label>Category</label><input id="f-category" type="text" placeholder="Optional" autocomplete="off"></div>
         <div class="fld-mini grow-notes"><label>Notes</label><input id="f-notes" type="text" placeholder="Optional"></div>
-        <div class="fld-mini"><label>Amount</label><input id="f-amount" type="text" placeholder="0.00" inputmode="decimal" required></div>
-        <div class="fld-mini">
+        <div class="fld-mini fld-amount"><label>Amount</label><input id="f-amount" type="text" placeholder="0.00" inputmode="decimal" required></div>
+        <div class="fld-mini fld-type">
           <label>Type</label>
           <div class="seg" id="dirSeg">
             <button type="button" class="withdraw active" onclick="setDirection('withdraw')"
@@ -687,8 +719,8 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
           <tr>
             <th>Date</th>
             <th>Payee / Description</th>
-            <th>Category</th>
-            <th>Notes</th>
+            <th class="col-category">Category</th>
+            <th class="col-notes">Notes</th>
             <th class="num">Withdraw</th>
             <th class="num">Deposit</th>
             <th class="num">Balance</th>
@@ -749,7 +781,7 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
             <th class="col-cleared"></th>
             <th>Date</th>
             <th>Payee / Description</th>
-            <th>Category</th>
+            <th class="col-category">Category</th>
             <th class="num">Withdraw</th>
             <th class="num">Deposit</th>
           </tr>
@@ -1381,6 +1413,7 @@ function resetEntryForm(){
   $("entrySubmitBtn").textContent = "Add";
   $("entryCancelBtn").style.display = "none";
   $("editingNote").style.display = "none";
+  $("entryForm").classList.remove("editing");
   clearEntryFields(false);
   $("f-payee").focus();
 }
@@ -1419,6 +1452,7 @@ async function submitEntry(){
   $("entrySubmitBtn").textContent = "Add";
   $("entryCancelBtn").style.display = "none";
   $("editingNote").style.display = "none";
+  $("entryForm").classList.remove("editing");
   clearEntryFields(true);
   await Promise.all([loadRegister(), refreshCategories(), refreshPayees()]);
   $("f-payee").focus();
@@ -1436,6 +1470,7 @@ function startEdit(row){
   $("entrySubmitBtn").textContent = "Save changes";
   $("entryCancelBtn").style.display = "inline-block";
   $("editingNote").style.display = "inline";
+  $("entryForm").classList.add("editing");
   $("f-payee").focus();
 }
 
