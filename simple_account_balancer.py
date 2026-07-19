@@ -45,8 +45,7 @@ PRERESTORE_KEEP = 3
 SCHEMA_VERSION = 3
 DEFAULT_RANGE_DAYS = 30
 
-# Enforced window minimum; the geometry-restore clamp and both create_window
-# calls must agree, so they all read these.
+# Enforced window minimum, read by create_window's min_size.
 MIN_WINDOW_W = 680
 MIN_WINDOW_H = 650
 
@@ -190,23 +189,64 @@ def save_prefs(prefs: dict) -> bool:
         return False
 
 
-def _restore_geometry() -> dict:
-    """Read a saved window position/size out of prefs, validated against the
-    monitors currently connected. Returns {} (meaning "let pywebview center
-    it as usual") whenever the saved value is missing, malformed, or points
-    somewhere that isn't reachable anymore, e.g. a monitor that's since been
-    unplugged. Never raises."""
+# Save and restore the ABSOLUTE window frame rectangle via Win32, found by
+# the window title. GetWindowRect (save) and SetWindowPos (restore) share
+# one frame-based, physical-pixel coordinate space, so the rect round-trips
+# exactly at any DPI or monitor layout. Do NOT pass x/y into create_window
+# and do NOT use window.move: pywebview's Qt backend applies those pre-show
+# and relative to the primary screen, so the window lands on the wrong
+# monitor, drifts down by the title-bar height each launch, and slides
+# sideways at non-100% scaling.
+def _win32():
+    u = ctypes.windll.user32
+    u.FindWindowW.restype = wintypes.HWND
+    u.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    u.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                               ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    return u
+
+
+def _save_geometry(win) -> None:
+    """Save the absolute frame rect (physical px) via Win32. Wired to
+    `closing`. Guarded end-to-end so a failure here can never interfere with
+    closing the app."""
+    try:
+        u = _win32()
+        hwnd = u.FindWindowW(None, win.title)
+        if not hwnd:
+            return
+        r = wintypes.RECT()
+        if not u.GetWindowRect(hwnd, ctypes.byref(r)):
+            return
+        x, y, w, h = r.left, r.top, r.right - r.left, r.bottom - r.top
+        # A minimized window reports a position around -32000; don't save
+        # that as if it were the user's chosen spot.
+        if x <= -30000 or y <= -30000:
+            return
+        if w <= 0 or h <= 0:
+            return
+        prefs = load_prefs()
+        prefs["window"] = {"x": x, "y": y, "width": w, "height": h}
+        save_prefs(prefs)
+    except Exception:
+        pass
+
+
+def _restore_geometry(win) -> None:
+    """Restore the saved frame rect via Win32. Wired to `shown` (after the OS
+    window exists). Validated against the monitors currently connected before
+    applying; never raises."""
     try:
         geo = load_prefs().get("window")
         if not isinstance(geo, dict):
-            return {}
-        x, y, width, height = geo.get("x"), geo.get("y"), geo.get("width"), geo.get("height")
-        for v in (x, y, width, height):
+            return
+        x, y, w, h = geo.get("x"), geo.get("y"), geo.get("width"), geo.get("height")
+        for v in (x, y, w, h):
             if not isinstance(v, int) or isinstance(v, bool):
-                return {}
-        width = max(MIN_WINDOW_W, min(width, 10000))
-        height = max(MIN_WINDOW_H, min(height, 10000))
-
+                return
+        if w <= 0 or h <= 0:
+            return
         # Confirm a point inside the title bar area is still on a connected
         # monitor; MonitorFromPoint returns NULL if it isn't (for example the
         # saved monitor has been unplugged since the last launch).
@@ -215,31 +255,14 @@ def _restore_geometry() -> dict:
         user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
         user32.MonitorFromPoint.restype = wintypes.HMONITOR
         MONITOR_DEFAULTTONULL = 0
-        monitor = user32.MonitorFromPoint(point, MONITOR_DEFAULTTONULL)
-        if not monitor:
-            return {}
-
-        return {"x": x, "y": y, "width": width, "height": height}
-    except Exception:
-        return {}
-
-
-def _save_geometry(win) -> None:
-    """Save the window's current position/size to prefs so the next launch
-    can restore it. Guarded end-to-end so a failure here can never interfere
-    with closing the app."""
-    try:
-        x, y, width, height = win.x, win.y, win.width, win.height
-        for v in (x, y, width, height):
-            if not isinstance(v, int) or isinstance(v, bool):
-                return
-        # A minimized window reports a position around -32000; don't save
-        # that as if it were the user's chosen spot.
-        if x <= -30000 or y <= -30000:
+        if not user32.MonitorFromPoint(point, MONITOR_DEFAULTTONULL):
             return
-        prefs = load_prefs()
-        prefs["window"] = {"x": x, "y": y, "width": width, "height": height}
-        save_prefs(prefs)
+        u = _win32()
+        hwnd = u.FindWindowW(None, win.title)
+        if not hwnd:
+            return
+        SWP_NOZORDER, SWP_NOACTIVATE = 0x0004, 0x0010
+        u.SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE)
     except Exception:
         pass
 
@@ -2093,30 +2116,17 @@ def main():
     except Exception as e:
         api.log(f"post_due_autopays call failed: {e}")
 
-    geo = _restore_geometry()
-    if geo:
-        win = webview.create_window(
-            "Simple Account Balancer",
-            url=resource_path("simple_account_balancer-UI.html"),
-            js_api=api,
-            x=geo["x"],
-            y=geo["y"],
-            width=geo["width"],
-            height=geo["height"],
-            min_size=(MIN_WINDOW_W, MIN_WINDOW_H),
-            background_color="#0a0e14",
-        )
-    else:
-        win = webview.create_window(
-            "Simple Account Balancer",
-            url=resource_path("simple_account_balancer-UI.html"),
-            js_api=api,
-            width=1150,
-            height=760,
-            min_size=(MIN_WINDOW_W, MIN_WINDOW_H),
-            background_color="#0a0e14",
-        )
+    win = webview.create_window(
+        "Simple Account Balancer",
+        url=resource_path("simple_account_balancer-UI.html"),
+        js_api=api,
+        width=1150,
+        height=760,
+        min_size=(MIN_WINDOW_W, MIN_WINDOW_H),
+        background_color="#0a0e14",
+    )
     api.set_window(win)
+    win.events.shown += lambda: _restore_geometry(win)
 
     def _on_window_closing():
         _save_geometry(win)
