@@ -10,6 +10,8 @@ Debug_Log_*.txt
 
 # --- Python ---
 __pycache__/
+.pytest_cache/
+.venv/
 
 # --- PyInstaller build artifacts ---
 build/

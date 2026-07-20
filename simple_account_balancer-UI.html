@@ -2178,7 +2178,10 @@ async function chooseBackupFolder(){
 async function resetBackupFolderClick(){
   if (!api()) return;
   const r = await api().reset_backup_folder();
-  if (!r || !r.ok) return;
+  if (!r || !r.ok){
+    $("am-err").textContent = (r && r.error) || "Couldn't reset the backup folder.";
+    return;
+  }
   STATE.backupFolder = r.backup_folder;
   STATE.backupFolderIsCustom = !!r.backup_folder_is_custom;
   renderBackupSection();
@@ -2188,9 +2191,14 @@ async function onBackupKeepChange(){
   let n = parseInt($("am-backup-keep").value, 10);
   if (!Number.isFinite(n)) n = STATE.backupKeep || 5;
   const r = await api().set_backup_keep(n);
-  if (r && r.ok){
-    STATE.backupKeep = r.backup_keep;
+  if (!r || !r.ok){
+    // Snap the input back to the stored value, but say why: a silent revert
+    // reads as the app changing its mind, not as a failed save.
+    $("am-err").textContent = (r && r.error) || "Couldn't save the backup count.";
+    $("am-backup-keep").value = STATE.backupKeep;
+    return;
   }
+  STATE.backupKeep = r.backup_keep;
   $("am-backup-keep").value = STATE.backupKeep;
 }
 
@@ -2843,7 +2851,7 @@ $("updateBtn").onclick = async () => {
       fadeNotice();
     }
   } catch (e) {
-    notice.textContent = "Couldn't reach GitHub";
+    notice.textContent = "Couldn't reach GitHub to check for updates";
     fadeNotice();
   }
   btn.disabled = false;

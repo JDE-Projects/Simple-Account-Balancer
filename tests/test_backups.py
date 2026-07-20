@@ -4,6 +4,7 @@ here touches a real backups/ folder."""
 import datetime
 import os
 
+import simple_account_balancer as sab
 from simple_account_balancer import (
     BACKUP_KEEP,
     BACKUP_KEEP_MIN,
@@ -14,6 +15,7 @@ from simple_account_balancer import (
     _parse_backup_timestamp,
     _prune_backups,
     _prune_prerestore_backups,
+    _run_backup_with_fallback,
 )
 
 
@@ -115,3 +117,16 @@ def test_prune_prerestore_backups_keeps_default_count(tmp_path):
     remaining = _list_backup_files(str(tmp_path), prerestore=True)
     assert len(remaining) == PRERESTORE_KEEP
     assert remaining == names[-PRERESTORE_KEEP:]
+
+
+# --- _run_backup_with_fallback -------------------------------------------------
+
+def test_run_backup_with_fallback_reports_failure_when_source_missing(tmp_path, monkeypatch):
+    # No backup_folder pref is set (app_dir is redirected to an empty
+    # tmp_path), so this exercises the default-folder path; the source db
+    # simply doesn't exist, so the copy itself can't succeed either way.
+    monkeypatch.setattr(sab, "app_dir", lambda: str(tmp_path))
+    missing_db = str(tmp_path / "does_not_exist.db")
+    ok, used_fallback, actual_dir = _run_backup_with_fallback(missing_db)
+    assert ok is False
+    assert used_fallback is False

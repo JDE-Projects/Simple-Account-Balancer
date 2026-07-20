@@ -514,7 +514,8 @@ class Api:
             self._conn.commit()
             prefs = load_prefs()
             prefs["active_account_id"] = new_id
-            save_prefs(prefs)
+            if not save_prefs(prefs):
+                self.log("Could not save active account pref")
             self.log(f"Account {new_id} created, starting as of {date_s}")
             return self.get_config()
         except Exception as e:
@@ -529,7 +530,8 @@ class Api:
                 return {"ok": False, "error": "That account no longer exists."}
             prefs = load_prefs()
             prefs["active_account_id"] = account["id"]
-            save_prefs(prefs)
+            if not save_prefs(prefs):
+                self.log("Could not save active account pref")
             self.log(f"Active account set to {account['id']}")
             return self.get_config()
         except Exception as e:
@@ -561,7 +563,8 @@ class Api:
                     "SELECT id FROM accounts ORDER BY name COLLATE NOCASE LIMIT 1"
                 ).fetchone()
                 prefs["active_account_id"] = remaining["id"] if remaining else None
-                save_prefs(prefs)
+                if not save_prefs(prefs):
+                    self.log("Could not save active account pref")
             self.log(f"Account {account['id']} deleted ({tx_count} transactions removed)")
             return self.get_config()
         except Exception as e:
@@ -1509,9 +1512,6 @@ class Api:
         theme = load_prefs().get("theme")
         return theme if theme in ("dark", "light") else "dark"
 
-    def get_theme(self):
-        return self._load_theme()
-
     def save_theme(self, theme: str):
         if theme not in ("dark", "light"):
             return {"ok": False}
@@ -1537,7 +1537,9 @@ class Api:
                 return {"ok": False, "error": "That folder isn't writable. Choose a different one."}
             prefs = load_prefs()
             prefs["backup_folder"] = folder
-            save_prefs(prefs)
+            if not save_prefs(prefs):
+                self.log("Could not save backup folder pref")
+                return {"ok": False, "error": "Couldn't save the backup folder setting."}
             self.log(f"Backup folder moved to {folder}")
             return {"ok": True, "backup_folder": folder, "backup_folder_is_custom": True}
         except Exception as e:
@@ -1549,7 +1551,9 @@ class Api:
         try:
             prefs = load_prefs()
             prefs.pop("backup_folder", None)
-            save_prefs(prefs)
+            if not save_prefs(prefs):
+                self.log("Could not save backup folder pref on reset")
+                return {"ok": False, "error": "Couldn't reset the backup folder."}
             self.log("Backup folder reset to default")
             default_dir, _ = effective_backup_dir()
             return {"ok": True, "backup_folder": default_dir, "backup_folder_is_custom": False}
@@ -1564,7 +1568,9 @@ class Api:
             keep = _clamp_backup_keep(n)
             prefs = load_prefs()
             prefs["backup_keep"] = keep
-            save_prefs(prefs)
+            if not save_prefs(prefs):
+                self.log("Could not save backup count pref")
+                return {"ok": False, "error": "Couldn't save the backup count."}
             self.log(f"Backup keep count set to {keep}")
             return {"ok": True, "backup_keep": keep}
         except Exception as e:
@@ -1964,6 +1970,17 @@ def _show_backup_fallback_notice(actual_dir: str):
         pass
 
 
+def _show_backup_failed_notice(folder: str):
+    msg = (
+        "The closing backup couldn't be saved. Tried to write it to "
+        f"{folder}."
+    )
+    try:
+        ctypes.windll.user32.MessageBoxW(0, msg, "Simple Account Balancer", 0x10)  # MB_ICONERROR
+    except Exception:
+        pass
+
+
 def _show_newer_schema_error():
     msg = (
         "This data file was created by a newer version of Simple Account "
@@ -2094,8 +2111,12 @@ def main():
         if ok:
             api.log(f"Launch backup created in {actual_dir}")
         else:
-            api.log("Launch backup failed or skipped")
-        if used_fallback:
+            api.log(f"Launch backup failed, tried {actual_dir}")
+        # Failure wins over the fallback notice: a fallback that then failed
+        # to write must not report that the backup was saved.
+        if not ok:
+            api.backup_notice = f"Today's backup couldn't be saved. Tried to write it to {actual_dir}."
+        elif used_fallback:
             api.backup_notice = (
                 f"Backup folder wasn't reachable. Today's backup was saved to {actual_dir} instead."
             )
@@ -2150,7 +2171,15 @@ def main():
     try:
         if os.path.exists(db_path):
             ok, used_fallback, actual_dir = _run_backup_with_fallback(db_path)
-            if used_fallback:
+            if ok:
+                api.log(f"Exit backup created in {actual_dir}")
+            else:
+                api.log(f"Exit backup failed, tried {actual_dir}")
+            # Failure wins over the fallback notice: a fallback that then
+            # failed to write must not report that the backup was saved.
+            if not ok:
+                _show_backup_failed_notice(actual_dir)
+            elif used_fallback:
                 _show_backup_fallback_notice(actual_dir)
     except Exception:
         pass
