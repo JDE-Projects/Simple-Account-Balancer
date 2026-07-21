@@ -505,6 +505,15 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
 .bottom-bar .bar-left, .bottom-bar .bar-right { display:flex; align-items:center; gap:10px; flex:none; }
 .bottom-bar .bar-center { flex:1; display:flex; align-items:center; justify-content:center; gap:14px; }
 
+.error-notice { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:var(--red); }
+.error-notice .notice-dismiss {
+  width:16px; height:16px; border:none; background:transparent; color:var(--red);
+  cursor:pointer; border-radius:4px; display:flex; align-items:center; justify-content:center;
+  opacity:.75; transition:.15s; padding:0;
+}
+.error-notice .notice-dismiss:hover { opacity:1; background:color-mix(in srgb, var(--red) 15%, transparent); }
+.error-notice .notice-dismiss svg { width:11px; height:11px; }
+
 .backup-notice { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:var(--amber); }
 .backup-notice .notice-dismiss {
   width:16px; height:16px; border:none; background:transparent; color:var(--amber);
@@ -1033,6 +1042,7 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
     <div class="modal">
       <h3>Delete this transaction?</h3>
       <div class="m-msg" id="del-msg"></div>
+      <div class="err" id="del-err"></div>
       <div class="m-foot">
         <button class="btn" onclick="closeDeleteModal()">Cancel</button>
         <button class="btn danger" onclick="confirmDelete()">Delete</button>
@@ -1080,6 +1090,12 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
       </label>
     </div>
     <div class="bar-center">
+      <span id="errorNotice" class="error-notice" style="display:none;">
+        <span id="errorNoticeText"></span>
+        <button type="button" class="notice-dismiss" onclick="dismissErrorNotice()" title="Dismiss">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
+        </button>
+      </span>
       <span id="backupNotice" class="backup-notice" style="display:none;">
         <span id="backupNoticeText"></span>
         <button type="button" class="notice-dismiss" onclick="dismissBackupNotice()" title="Dismiss">
@@ -1115,7 +1131,7 @@ let pendingConfirmEstimateId = null;
 let reorderDate = null;
 let reorderRows = [];
 
-/* ---------- Phase 4: categories, payees, range + search ---------- */
+/* ---------- categories, payees, range + search ---------- */
 let CATEGORIES = [];
 let PAYEES = [];
 let currentRange = { from:null, to:null };
@@ -1123,24 +1139,26 @@ let currentSearch = "";
 let currentDirFilter = "all";
 let searchDebounceTimer = null;
 let registerUIInit = false;
+let registerRangeCtl = null;
 let editingCategoryId = null;
 let pendingDeleteCategory = null;
 
-/* ---------- Phase 5: reconcile view ---------- */
+/* ---------- reconcile view ---------- */
 let RECON = [];
 let reconRange = { from:null, to:null };
 let reconUIInit = false;
+let reconRangeCtl = null;
 let currentView = "register";
 let reconSummary = null;
 let finderOpen = false;
 
-/* ---------- Phase 6: account switcher, CSV export, backups, restore ---------- */
+/* ---------- account switcher, CSV export, backups, restore ---------- */
 let accountMenuOpen = false;
 let exportRange = { from:null, to:null, label:null };
 let pendingDeleteAccountName = null;
 let RESTORE = { backups: [], preview: null, pendingFilename: null };
 
-/* ---------- Phase 7: autopays ---------- */
+/* ---------- autopays ---------- */
 let AUTOPAYS = [];
 let apUIInit = false;
 let editingAutopayId = null;
@@ -1164,6 +1182,14 @@ function isoMinusDays(n){
   const d = new Date();
   d.setDate(d.getDate() - n);
   return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+/* Dates are stored and passed around as ISO (YYYY-MM-DD); only the
+   on-screen text is US format. Split the string rather than going
+   through Date(): `new Date("2026-07-21")` parses as UTC midnight and
+   renders as the previous day in any negative-offset timezone. */
+function fmtDate(iso){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+  return m ? `${m[2]}/${m[3]}/${m[1]}` : (iso || "");
 }
 
 /* ---------- shared suggestion dropdown (payee / category typeahead) ----------
@@ -1346,6 +1372,18 @@ function createRangeControl(container, onChange, opts){
   });
 
   emit(); // fire the default immediately (All history when allowed, else Last 30 Days)
+
+  // Lets callers put the control back to its just-created state (used when
+  // switching accounts, so a range chosen for the old account doesn't carry
+  // over silently).
+  function reset(){
+    sel.value = opts.allowAll ? "all" : "30";
+    customWrap.style.display = "none";
+    fromInput.value = "";
+    toInput.value = "";
+    emit();
+  }
+  return { reset };
 }
 
 /* ---------- theme ---------- */
@@ -1356,10 +1394,16 @@ function applyTheme(theme){
 async function toggleTheme(){
   const next = STATE.theme === "light" ? "dark" : "light";
   applyTheme(next);
-  if (api()) await api().save_theme(next);
+  if (!api()) return;
+  const r = await api().save_theme(next);
+  // The theme change already took effect for this session; only persistence
+  // failed, so don't revert it visually, that would be more confusing.
+  if (!r || !r.ok){
+    showErrorNotice((r && r.error) || "Theme won't be remembered: couldn't save settings next to the app.");
+  }
 }
 
-/* ---------- Phase 6: shared config apply + post-switch refresh ---------- */
+/* ---------- shared config apply + post-switch refresh ---------- */
 function applyConfig(cfg){
   STATE.hasAccount = cfg.has_account;
   STATE.account = cfg.account;
@@ -1524,7 +1568,7 @@ function rowHtml(row){
         </button>`
     : "";
   return `<tr data-id="${row.id}" class="${trCls}">
-    <td class="col-date">${esc(row.date)}</td>
+    <td class="col-date">${esc(fmtDate(row.date))}</td>
     <td class="col-payee" title="${esc(row.payee)}">${esc(row.payee)}</td>
     <td class="col-category" title="${esc(row.category)}">${esc(row.category)}</td>
     <td class="col-notes" title="${esc(row.notes)}">${esc(row.notes)}</td>
@@ -1581,7 +1625,7 @@ function openReorderDay(date){
   reorderRows = TX.filter(r => r.date === date).map(r => ({
     id: r.id, payee: r.payee, amount_cents: r.amount_cents,
   }));
-  $("reorder-date").textContent = date;
+  $("reorder-date").textContent = fmtDate(date);
   $("reorder-err").textContent = "";
   renderReorderList();
   $("reorderModalScrim").classList.add("open");
@@ -1665,7 +1709,8 @@ function deleteRow(id){
   if (!row) return;
   pendingDeleteId = id;
   const sign = row.amount_cents < 0 ? "Withdraw " : "Deposit ";
-  $("del-msg").innerHTML = `${esc(row.payee)}<span class="m-detail">${sign}${esc(fmtMoney(Math.abs(row.amount_cents)))} on ${esc(row.date)}</span>`;
+  $("del-msg").innerHTML = `${esc(row.payee)}<span class="m-detail">${sign}${esc(fmtMoney(Math.abs(row.amount_cents)))} on ${esc(fmtDate(row.date))}</span>`;
+  $("del-err").textContent = "";
   $("delModalScrim").classList.add("open");
 }
 function closeDeleteModal(){
@@ -1675,12 +1720,17 @@ function closeDeleteModal(){
 async function confirmDelete(){
   if (!pendingDeleteId || !api()) { closeDeleteModal(); return; }
   const id = pendingDeleteId;
-  closeDeleteModal();
   const r = await api().delete_transaction(id);
-  if (r && r.ok){
-    if (editingId === id) resetEntryForm();
-    await loadRegister();
+  if (!r || !r.ok){
+    // Leave the modal open so the message is visible; if the row is already
+    // gone the register behind the modal is stale, so clear it out too.
+    $("del-err").textContent = (r && r.error) || "Something went wrong.";
+    if (r && r.error === "That transaction no longer exists.") await loadRegister();
+    return;
   }
+  closeDeleteModal();
+  if (editingId === id) resetEntryForm();
+  await loadRegister();
 }
 
 async function loadRegister(){
@@ -1740,7 +1790,7 @@ function initRegisterUI(){
   if (registerUIInit) return;
   registerUIInit = true;
 
-  createRangeControl($("rangeControlSlot"), (range) => {
+  registerRangeCtl = createRangeControl($("rangeControlSlot"), (range) => {
     currentRange = { from: range.from, to: range.to };
     loadRegister();
   });
@@ -1762,12 +1812,12 @@ function initRegisterUI(){
   );
 }
 
-/* ---------- Phase 5: reconcile view ---------- */
+/* ---------- reconcile view ---------- */
 function initReconcileUI(){
   if (reconUIInit) return;
   reconUIInit = true;
 
-  createRangeControl($("reconRangeSlot"), (range) => {
+  reconRangeCtl = createRangeControl($("reconRangeSlot"), (range) => {
     reconRange = { from: range.from, to: range.to };
     clearFinderResults(); // a changed date range makes prior finder results stale
     loadReconcile();
@@ -1823,7 +1873,7 @@ function reconRowHtml(row){
       <input type="checkbox" class="recon-check" ${row.cleared ? "checked" : ""}
              onchange="onReconCheckboxChange(${row.id}, this.checked)">
     </label></td>
-    <td class="col-date">${esc(row.date)}</td>
+    <td class="col-date">${esc(fmtDate(row.date))}</td>
     <td class="col-payee" title="${esc(row.payee)}">${esc(row.payee)}</td>
     <td class="col-category" title="${esc(row.category)}">${esc(row.category)}</td>
     <td class="num">${withdrawCell}</td>
@@ -1871,7 +1921,7 @@ function revertReconCheckbox(id, checked){
   if (cb) cb.checked = checked;
 }
 
-/* ---------- Phase 5: discrepancy finder ---------- */
+/* ---------- discrepancy finder ---------- */
 function toggleFinder(){
   finderOpen = !finderOpen;
   $("finderPanel").classList.toggle("open", finderOpen);
@@ -1914,7 +1964,7 @@ function finderTxRowHtml(row){
     : `<span class="finder-tx-cleared not-cleared" title="Not cleared">&#9675;</span>`;
   return `<div class="finder-tx-row" onclick="focusReconRow(${row.id})"${titleAttr}>
     ${clearedMark}
-    <span class="finder-tx-date">${esc(row.date)}</span>
+    <span class="finder-tx-date">${esc(fmtDate(row.date))}</span>
     <span class="finder-tx-payee" title="${esc(row.payee)}">${esc(row.payee)}</span>
     <span class="finder-tx-amt">${esc(fmtMoney(row.amount_cents))}</span>
   </div>`;
@@ -2077,7 +2127,7 @@ async function doAccountSave(){
   await loadRegister();
 }
 
-/* ---------- Phase 6: account switcher ---------- */
+/* ---------- account switcher ---------- */
 function toggleAccountMenu(){
   if (accountMenuOpen) closeAccountMenu();
   else openAccountMenu();
@@ -2121,12 +2171,33 @@ async function pickAccount(id){
   closeAccountMenu();
   if (!api() || (STATE.account && id === STATE.account.id)) return;
   const r = await api().set_active_account(id);
-  if (!r || !r.ok) return;
+  if (!r || !r.ok){
+    showErrorNotice((r && r.error) || "Couldn't switch accounts.");
+    return;
+  }
   applyConfig(r);
-  await refreshForActiveAccount();
+
+  // Filters, search, and the chosen date range are per-account context;
+  // carrying them over from the account just left would silently narrow (or
+  // empty) the new account's register/reconcile until the user notices.
+  if (editingId) cancelEdit();
+  currentSearch = "";
+  $("searchInput").value = "";
+  $("searchClear").style.display = "none";
+  if (searchDebounceTimer){ clearTimeout(searchDebounceTimer); searchDebounceTimer = null; }
+  TX = []; // cleared before the filter reset below repaints, so nothing renders against the old account's rows
+  setDirFilter("all");
+  clearFinderResults();
+  renderHeader();
+  // Each reset fires its control's onChange, which reloads that view once;
+  // together they cover both register and reconcile without a second,
+  // redundant load from refreshForActiveAccount.
+  if (registerRangeCtl) registerRangeCtl.reset();
+  if (reconRangeCtl) reconRangeCtl.reset();
+  await refreshPayees();
 }
 
-/* ---------- Phase 6: add account modal ---------- */
+/* ---------- add account modal ---------- */
 function openAddAccountModal(){
   closeAccountMenu();
   $("aa-name").value = "Checking";
@@ -2156,7 +2227,7 @@ async function createAccountFromModal(){
   await refreshForActiveAccount();
 }
 
-/* ---------- Phase 6: account settings modal, backups section ---------- */
+/* ---------- account settings modal, backups section ---------- */
 function renderBackupSection(){
   $("am-backup-path").textContent = STATE.backupFolder || "Not set";
   $("am-backup-path").title = STATE.backupFolder || "";
@@ -2202,7 +2273,7 @@ async function onBackupKeepChange(){
   $("am-backup-keep").value = STATE.backupKeep;
 }
 
-/* ---------- Phase 6: restore from backup ---------- */
+/* ---------- restore from backup ---------- */
 function resetRestoreScreens(){
   $("amScreenRestoreList").style.display = "none";
   $("amScreenRestoreConfirm").style.display = "none";
@@ -2319,7 +2390,7 @@ async function confirmRestore(){
   await Promise.all([refreshForActiveAccount(), refreshCategories()]);
 }
 
-/* ---------- Phase 6: account settings modal, delete account ---------- */
+/* ---------- account settings modal, delete account ---------- */
 function openDeleteAccountConfirm(){
   if (!STATE.account) return;
   pendingDeleteAccountName = STATE.account.name;
@@ -2358,7 +2429,7 @@ async function confirmDeleteAccount(){
   await refreshForActiveAccount();
 }
 
-/* ---------- Phase 6: export CSV modal ---------- */
+/* ---------- export CSV modal ---------- */
 function openExportModal(){
   $("export-err").textContent = "";
   const note = $("export-note");
@@ -2806,7 +2877,22 @@ async function confirmDeleteAutopay(){
 function openUrl(u){ if (api()) api().open_url(u); }
 async function onDebugToggle(on){ if (api()) await api().set_debug(on); }
 
-/* ---------- Phase 6: backup notice (bottom bar, dismissible for the session) ---------- */
+/* ---------- error notice (bottom bar, dismissible for the session) ----------
+   Hides the backup/autopay notices whenever it appears: bar-center doesn't
+   wrap and the window's 680px minimum width means several notices up at
+   once would squeeze each other out, so the error is the one that must not
+   get squeezed out. */
+function showErrorNotice(text){
+  dismissBackupNotice();
+  dismissAutopayNotice();
+  $("errorNoticeText").textContent = text;
+  $("errorNotice").style.display = "inline-flex";
+}
+function dismissErrorNotice(){
+  $("errorNotice").style.display = "none";
+}
+
+/* ---------- backup notice (bottom bar, dismissible for the session) ---------- */
 function showBackupNotice(text){
   $("backupNoticeText").textContent = text;
   $("backupNotice").style.display = "inline-flex";
