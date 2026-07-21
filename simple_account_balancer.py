@@ -32,7 +32,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 import webview
 
-APP_VERSION = "1.7.1"
+APP_VERSION = "1.7.2"
 GITHUB_OWNER = "JDE-Projects"
 GITHUB_REPO = "Simple-Account-Balancer"
 
