@@ -60,21 +60,34 @@ body.light {
 *::-webkit-scrollbar-button { display:none; height:0; width:0; }
 *::-webkit-scrollbar-corner { background:transparent; }
 
-/* ---- header ---- */
+/* ---- standard header, with the balance retained as this app's center slot ---- */
 /* Equal 1fr side columns keep the balance block truly centered on the
-   window, not on the leftover space between the title and theme button. */
-header {
+   window, not on the leftover space between the brand and theme button. */
+.app-header {
   display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
   align-items:start; padding:18px 24px 12px; gap:18px; flex:0 0 auto;
 }
-.head-left { min-width:0; }
-.title { font-size:22px; font-weight:700; letter-spacing:.2px; }
-.byline { font-family:"JetBrains Mono", monospace; font-size:11.5px; color:var(--text-dim); margin-top:3px; }
-.gh-link { font-family:"JetBrains Mono", monospace; font-size:11.5px; color:var(--accent); cursor:pointer; text-decoration:none; }
-.gh-link:hover { text-decoration:underline; }
+.app-header .brand { display:flex; align-items:center; gap:13px; min-width:0; }
+.app-header .brand-text { min-width:0; }
+.app-header .app-glyph {
+  width:40px; height:40px; border-radius:11px; flex:0 0 auto; display:block;
+  box-shadow:0 0 24px var(--glow);
+}
+.app-header .title {
+  font-size:18px; font-weight:700; letter-spacing:.2px; color:var(--text); line-height:1.25;
+}
+.app-header .byline {
+  font-family:"JetBrains Mono", monospace; font-size:11.5px; color:var(--text-dim);
+  margin-top:3px; white-space:nowrap;
+}
+.app-header .byline a { color:var(--accent); text-decoration:none; cursor:pointer; }
+.app-header .byline a:hover { text-decoration:underline; }
 
 /* ---- header center: account + big balance (the app's centerpiece) ---- */
-.head-center { display:flex; flex-direction:column; align-items:center; min-width:0; padding-top:2px; }
+.head-center {
+  display:flex; flex-direction:column; align-items:center; min-width:0;
+  width:min(380px, 44vw); padding-top:2px;
+}
 .acct-row { display:flex; align-items:center; gap:8px; }
 .acct-trigger {
   display:flex; align-items:center; gap:5px; background:transparent; border:none;
@@ -125,7 +138,7 @@ header {
 .balance-upcoming { font-size:13.5px; color:var(--text-faint); margin-top:2px; }
 .balance-upcoming .amt-upcoming.neg { color:var(--red); }
 
-.head-right { display:flex; align-items:flex-start; justify-self:end; }
+.app-header .head-right { display:flex; align-items:center; gap:12px; justify-self:end; }
 .theme-btn {
   background:transparent; border:1px solid var(--border-2); border-radius:var(--radius-sm);
   width:36px; height:36px; display:flex; align-items:center; justify-content:center;
@@ -589,7 +602,7 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
 /* ---- narrower still: drop low-priority columns, tighten margins, let the title wrap ---- */
 @media (max-width: 820px) {
   .col-notes { display:none; }
-  .title { font-size:16px; }
+  .app-header .title { font-size:16px; }
   .entry-wrap, .toolbar { padding-left:16px; padding-right:16px; }
   .table-wrap { padding:0 16px 18px; }
   table.register thead th, table.register tbody td { padding:8px 6px; }
@@ -602,10 +615,13 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
 </style>
 </head>
 <body>
-  <header>
-    <div class="head-left">
-      <div class="title">Simple Account Balancer</div>
-      <div class="byline">by <a class="gh-link" onclick="openUrl('https://github.com/JDE-Projects')">JDE-Projects</a></div>
+  <header class="app-header">
+    <div class="brand">
+      <img class="app-glyph" src="simple_account_balancer.png" alt="">
+      <div class="brand-text">
+        <div class="title">Simple Account Balancer</div>
+        <div class="byline">by <a onclick="openUrl('https://github.com/JDE-Projects')">JDE-Projects</a></div>
+      </div>
     </div>
     <div class="head-center" id="headCenter" style="display:none;">
       <div class="acct-row">
