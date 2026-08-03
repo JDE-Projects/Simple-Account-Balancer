@@ -13,13 +13,13 @@ Sora (font)      OFL-1.1        https://github.com/sora-xor/sora-font
 JetBrains Mono   OFL-1.1        https://github.com/JetBrains/JetBrainsMono
 
 # Per-app components
-This tool uses only the Python standard library, so it bundles nothing beyond
-the always-bundled block above.
+truststore       MIT            https://github.com/sethmlarson/truststore
 
 Notice lines
 ------------
 Sora             Copyright 2019 The Sora Project Authors
 JetBrains Mono   Copyright 2020 The JetBrains Mono Project Authors
+truststore       Copyright 2022 Seth Michael Larson
 
 PySide6 / Qt is LGPL (not GPL), and the build ships --onedir so the bundled Qt
 libraries stay replaceable. Full license texts are available at the URLs above.

@@ -40,7 +40,7 @@ If you enjoyed this project and would like to buy me a coffee, check out my [Ko-
 - Automatic rolling backups on launch and exit; backups live next to the
   app by default, or in any folder you choose.
 - Local only - your data never leaves the machine.
-- Checks GitHub Releases for a newer version (at startup and on demand; silent when offline).
+- Checks GitHub Releases for a newer version (silent at startup; on demand it explains why a check failed).
 
 ## How it works
 - Storage: a single SQLite database (`simple_account_balancer.db`) next to
