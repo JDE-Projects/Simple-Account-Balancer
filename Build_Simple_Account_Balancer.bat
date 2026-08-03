@@ -41,6 +41,7 @@ pyinstaller --onedir --windowed --name "Simple Account Balancer" ^
   --add-data "fonts;fonts" ^
   --collect-all PySide6 ^
   --collect-all qtpy ^
+  --hidden-import truststore ^
   simple_account_balancer.py
 echo.
 echo =====================================================
