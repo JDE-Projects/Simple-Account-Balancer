@@ -6,14 +6,16 @@ License 1.0.0 (see LICENSE). The packaged Windows build bundles the third-party
 components below; each remains under its own license. This file is a notice,
 not legal advice.
 
-# Always bundled (every app)
+# Always bundled (every desktop app)
 PySide6 / Qt     LGPL-3.0       https://www.qt.io/licensing/
 pywebview        BSD-3-Clause   https://github.com/r0x0r/pywebview
+truststore       MIT            https://github.com/sethmlarson/truststore
 Sora (font)      OFL-1.1        https://github.com/sora-xor/sora-font
 JetBrains Mono   OFL-1.1        https://github.com/JetBrains/JetBrainsMono
 
 # Per-app components
-truststore       MIT            https://github.com/sethmlarson/truststore
+This tool uses only the Python standard library beyond the always-bundled
+block above.
 
 Notice lines
 ------------
