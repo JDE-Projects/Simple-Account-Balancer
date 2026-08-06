@@ -19,6 +19,3 @@ __pycache__/
 build/
 dist/
 *.spec
-
-# --- Local launch / debug ---
-Launch_*.bat
