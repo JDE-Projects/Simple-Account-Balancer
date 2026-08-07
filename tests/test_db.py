@@ -5,11 +5,68 @@ import sqlite3
 import pytest
 
 from simple_account_balancer import (
+    Api,
     NewerSchemaError,
     SCHEMA_VERSION,
     SEED_CATEGORIES,
     open_db,
 )
+
+
+def _api_with_estimated_transaction(tmp_path, amount_cents=-5000):
+    """Build an Api on a fresh db holding one account and one estimated
+    withdrawal, returning (api, transaction_id)."""
+    conn = open_db(str(tmp_path / "test.db"))
+    conn.execute(
+        "INSERT INTO accounts "
+        "(name, starting_balance_cents, starting_date, created_at) "
+        "VALUES ('Checking', 0, '2026-01-01', '2026-01-01')"
+    )
+    cur = conn.execute(
+        "INSERT INTO transactions "
+        "(account_id, date, payee, category, notes, amount_cents, cleared, estimated, created_at) "
+        "VALUES (1, '2026-01-15', 'Water bill', 'Utilities', '', ?, 0, 1, '2026-01-01')",
+        (amount_cents,),
+    )
+    conn.commit()
+    api = Api()
+    api.set_conn(conn)
+    return api, cur.lastrowid
+
+
+def test_update_transaction_clears_estimated_flag(tmp_path):
+    api, tid = _api_with_estimated_transaction(tmp_path)
+    try:
+        # Same amount as saved: editing without touching the amount must still
+        # clear the estimate flag, otherwise the user can never dismiss it.
+        result = api.update_transaction(
+            tid, "2026-01-15", "Water bill", "Utilities", "", "50.00", "withdraw"
+        )
+        assert result["ok"] is True
+        estimated = api._conn.execute(
+            "SELECT estimated FROM transactions WHERE id=?", (tid,)
+        ).fetchone()["estimated"]
+        assert estimated == 0
+    finally:
+        api._conn.close()
+
+
+def test_update_transaction_clears_estimated_flag_on_date_change(tmp_path):
+    api, tid = _api_with_estimated_transaction(tmp_path)
+    try:
+        # The date-change branch is a separate UPDATE statement, so it needs its
+        # own coverage that the flag clears there too.
+        result = api.update_transaction(
+            tid, "2026-02-01", "Water bill", "Utilities", "", "63.20", "withdraw"
+        )
+        assert result["ok"] is True
+        row = api._conn.execute(
+            "SELECT estimated, amount_cents FROM transactions WHERE id=?", (tid,)
+        ).fetchone()
+        assert row["estimated"] == 0
+        assert row["amount_cents"] == -6320
+    finally:
+        api._conn.close()
 
 
 def test_open_db_creates_expected_tables(tmp_path):
