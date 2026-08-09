@@ -996,16 +996,20 @@ class Api:
             # A date change moves the transaction to a different day, so its
             # sort_key is reset to its id, landing it by the old insertion-order
             # rule in the target day rather than carrying a stale position.
+            # Saving the full editor counts as reviewing the posting, so any
+            # estimated flag from a variable autopay is cleared here. Editing
+            # without changing the amount still clears it, otherwise a user who
+            # agrees with the estimate would have no way to dismiss the flag.
             if date_s != row["date"]:
                 cur.execute(
                     "UPDATE transactions SET date=?, payee=?, category=?, notes=?, amount_cents=?, "
-                    "sort_key=id WHERE id=?",
+                    "estimated=0, sort_key=id WHERE id=?",
                     (date_s, payee_s, category_s, notes_s, signed, transaction_id),
                 )
             else:
                 cur.execute(
-                    "UPDATE transactions SET date=?, payee=?, category=?, notes=?, amount_cents=? "
-                    "WHERE id=?",
+                    "UPDATE transactions SET date=?, payee=?, category=?, notes=?, amount_cents=?, "
+                    "estimated=0 WHERE id=?",
                     (date_s, payee_s, category_s, notes_s, signed, transaction_id),
                 )
             if category_s:
