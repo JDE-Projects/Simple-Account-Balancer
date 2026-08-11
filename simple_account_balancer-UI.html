@@ -305,12 +305,12 @@ table.register tbody tr:hover .row-actions { opacity:1; }
 
 .empty-hint { padding:40px 24px; text-align:center; color:var(--text-faint); font-size:13.5px; }
 
-/* ---- view tabs (register / reconcile) ---- */
+/* ---- view tabs (register / compare) ---- */
 .tabs-wrap {
   padding:0 24px 10px; flex:0 0 auto; display:flex; align-items:center;
   justify-content:space-between; gap:14px;
 }
-/* register-only actions on the right of the tab strip; hidden in reconcile */
+/* register-only actions on the right of the tab strip; hidden in Compare */
 .tab-actions { display:flex; align-items:center; gap:10px; }
 .view-tabs { display:inline-flex; border:1px solid var(--border-2); border-radius:var(--radius-sm); overflow:hidden; background:var(--panel-2); }
 .view-tabs button {
@@ -321,30 +321,34 @@ table.register tbody tr:hover .row-actions { opacity:1; }
 .view-tabs button:hover:not(.active) { color:var(--text); }
 .view-tabs button.active { background:color-mix(in srgb, var(--accent) 18%, var(--panel-2)); color:var(--accent); }
 
-/* ---- reconcile ---- */
-.recon-summary {
+/* ---- compare ---- */
+.compare-summary {
   display:flex; align-items:center; gap:30px; flex-wrap:wrap;
   background:linear-gradient(180deg, var(--panel), var(--bg-2));
   border:1px solid var(--border); border-radius:var(--radius); padding:14px 18px;
 }
-.recon-stat { display:flex; flex-direction:column; gap:4px; }
-.recon-stat label { font-size:10px; font-weight:600; letter-spacing:.4px; text-transform:uppercase; color:var(--text-faint); }
-.recon-amt { font-family:"JetBrains Mono", monospace; font-size:17px; font-weight:500; color:var(--text); }
-.recon-amt.neg { color:var(--red); }
-.recon-amt.zero { color:var(--green); }
-.recon-hint { margin-top:10px; font-size:11.5px; color:var(--text-faint); }
-.col-cleared { width:36px; text-align:center; }
-td.col-cleared { padding:0; }
-.recon-check-wrap { display:flex; align-items:center; justify-content:center; height:100%; padding:8px 10px; cursor:pointer; }
-.recon-check { accent-color:var(--accent); cursor:pointer; width:15px; height:15px; }
+.compare-stat { display:flex; flex-direction:column; gap:4px; }
+.compare-stat label { font-size:10px; font-weight:600; letter-spacing:.4px; text-transform:uppercase; color:var(--text-faint); }
+.compare-amt { font-family:"JetBrains Mono", monospace; font-size:17px; font-weight:500; color:var(--text); }
+.compare-amt.neg { color:var(--red); }
+.compare-amt.zero { color:var(--green); }
+.compare-hint { margin-top:10px; font-size:11.5px; color:var(--text-faint); }
+.compare-bank-input { width:150px; font-family:"JetBrains Mono", monospace; color:var(--text); background:var(--panel-2); border:1px solid var(--border-2); border-radius:var(--radius-sm); padding:7px 9px; outline:none; }
+.compare-bank-input:focus { border-color:var(--accent); }
+.col-found { width:72px; text-align:center; }
+td.col-found { padding:0; }
+.compare-check-wrap { display:flex; align-items:center; justify-content:center; gap:5px; height:100%; padding:8px 10px; cursor:pointer; font-size:11px; color:var(--text-dim); }
+.compare-check { accent-color:var(--accent); cursor:pointer; width:15px; height:15px; }
+table.register tr.compare-found { background:color-mix(in srgb, var(--accent) 16%, var(--panel-2)); box-shadow:inset 4px 0 var(--accent); }
+table.register tr.compare-found td { color:var(--text); }
 
-@keyframes reconFlash {
+@keyframes compareFlash {
   0% { background:color-mix(in srgb, var(--accent) 35%, transparent); }
   100% { background:transparent; }
 }
-table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
+table.register tr.compare-flash { animation:compareFlash 1.2s ease; }
 
-/* ---- discrepancy finder ---- */
+/* ---- comparison finder ---- */
 .finder-panel {
   margin-top:14px;
   background:linear-gradient(180deg, var(--panel), var(--bg-2));
@@ -375,11 +379,11 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
   cursor:pointer; transition:.15s;
 }
 .finder-tx-row:hover { background:color-mix(in srgb, var(--accent) 8%, transparent); }
-.finder-tx-cleared {
+.finder-tx-found {
   flex:0 0 auto; width:14px; text-align:center; font-size:11px; line-height:1;
 }
-.finder-tx-cleared.is-cleared { color:var(--green); }
-.finder-tx-cleared.not-cleared { color:var(--text-faint); }
+.finder-tx-found.is-found { color:var(--accent); }
+.finder-tx-found.not-found { color:var(--text-faint); }
 .finder-tx-date { font-family:"JetBrains Mono", monospace; font-size:11.5px; color:var(--text-dim); white-space:nowrap; }
 .finder-tx-payee { flex:1; font-size:12.5px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .finder-tx-amt { font-family:"JetBrains Mono", monospace; font-size:12.5px; color:var(--text); white-space:nowrap; }
@@ -681,11 +685,11 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
     </div>
   </div>
 
-  <!-- register / reconcile tab strip -->
+  <!-- register / Compare tab strip -->
   <div class="tabs-wrap" id="viewTabs" style="display:none;">
     <div class="view-tabs">
       <button type="button" class="active" id="tabRegisterBtn" onclick="switchView('register')">Register</button>
-      <button type="button" id="tabReconcileBtn" onclick="switchView('reconcile')">Reconcile</button>
+      <button type="button" id="tabCompareBtn" onclick="switchView('compare')">Compare</button>
     </div>
     <div class="tab-actions" id="tabActions">
       <button type="button" class="btn" onclick="openAutopayModal()">Autopays</button>
@@ -758,30 +762,32 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
     </div>
   </div>
 
-  <!-- reconcile view -->
-  <div id="reconcileWrap" style="display:none; flex:1; min-height:0; flex-direction:column;">
+  <!-- Compare view -->
+  <div id="compareWrap" style="display:none; flex:1; min-height:0; flex-direction:column;">
     <div class="toolbar">
-      <div id="reconRangeSlot"></div>
+      <div id="compareRangeSlot"></div>
     </div>
 
     <div class="entry-wrap">
-      <div class="recon-summary">
-        <div class="recon-stat">
-          <label>Cleared balance</label>
-          <span class="recon-amt" id="reconClearedAmt">$0.00</span>
+      <div class="compare-summary">
+        <div class="compare-stat">
+          <label>Bank posted balance</label>
+          <input class="compare-bank-input" id="compareBankBalance" type="text" placeholder="Optional" inputmode="decimal" oninput="onCompareBankBalanceInput()">
+          <div class="err" id="compareBankErr"></div>
         </div>
-        <div class="recon-stat">
+        <div class="compare-stat">
           <label>Register balance</label>
-          <span class="recon-amt" id="reconRegisterAmt">$0.00</span>
+          <span class="compare-amt" id="compareRegisterAmt">$0.00</span>
         </div>
-        <div class="recon-stat">
-          <label>Difference</label>
-          <span class="recon-amt" id="reconDiffAmt">$0.00</span>
+        <div class="compare-stat">
+          <label>Unexplained difference</label>
+          <span class="compare-amt" id="compareDiffAmt">$0.00</span>
         </div>
+        <button type="button" class="btn" onclick="resetCompareMarks()">Reset marks</button>
       </div>
-      <div class="recon-hint">Check off transactions as they appear on your bank statement. Cleared status never changes your balance.</div>
+      <div class="compare-hint">Found marks are temporary and never change your register. Activity before this range is assumed to agree. Widen the range to recover earlier activity. Future entries remain register-only until marked Found.</div>
 
-      <!-- discrepancy finder -->
+      <!-- comparison finder -->
       <div class="finder-panel" id="finderPanel">
         <button type="button" class="finder-toggle" onclick="toggleFinder()">
           <span>Off by an amount? Find it</span>
@@ -799,11 +805,11 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
       </div>
     </div>
 
-    <div class="table-wrap" id="reconTableWrap">
-      <table class="register" id="reconcileTable" style="display:none;">
+    <div class="table-wrap" id="compareTableWrap">
+      <table class="register" id="compareTable" style="display:none;">
         <thead>
           <tr>
-            <th class="col-cleared"></th>
+            <th class="col-found">Found</th>
             <th>Date</th>
             <th>Payee / Description</th>
             <th class="col-category">Category</th>
@@ -811,9 +817,9 @@ table.register tr.recon-flash { animation:reconFlash 1.2s ease; }
             <th class="num">Deposit</th>
           </tr>
         </thead>
-        <tbody id="reconcileBody"></tbody>
+        <tbody id="compareBody"></tbody>
       </table>
-      <div class="empty-hint" id="reconEmptyHint" style="display:none;">No transactions in this range.</div>
+      <div class="empty-hint" id="compareEmptyHint" style="display:none;">No transactions in this range.</div>
     </div>
   </div>
 
@@ -1170,13 +1176,16 @@ let registerRangeCtl = null;
 let editingCategoryId = null;
 let pendingDeleteCategory = null;
 
-/* ---------- reconcile view ---------- */
-let RECON = [];
-let reconRange = { from:null, to:null };
-let reconUIInit = false;
-let reconRangeCtl = null;
+/* ---------- Compare view ---------- */
+let COMPARE = [];
+let compareRange = { from:null, to:null };
+let compareUIInit = false;
+let compareRangeCtl = null;
+let compareFoundIds = new Set();
+let compareMarksAccountId = null;
 let currentView = "register";
-let reconSummary = null;
+let compareRegisterBalanceCents = 0;
+let compareDataUnavailable = false;
 let finderOpen = false;
 
 /* ---------- account switcher, CSV export, backups, restore ---------- */
@@ -1330,7 +1339,7 @@ function attachSuggest(input, getItems, onPick, opts){
   window.addEventListener("resize", () => { if (open) position(); });
 }
 
-/* ---------- shared date-range control (register / reconcile / CSV export) ----------
+/* ---------- shared date-range control (register / Compare / CSV export) ----------
    createRangeControl(container, onChange, opts): renders presets + a Custom
    from/to pair into container, emits {from, to, label} on every change.
    Presets: from = today minus N days, no upper bound. Custom: both ends.
@@ -1356,7 +1365,7 @@ function createRangeControl(container, onChange, opts){
         <input type="date" class="range-from">
         <span class="range-to-sep">to</span>
         <input type="date" class="range-to">
-        <button type="button" class="icon-btn range-reset" title="Reset to the last 30 days">
+        <button type="button" class="icon-btn range-reset" title="Reset date range">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 2.6-6.3L3 8"/><path d="M3 3v5h5"/></svg>
         </button>
       </div>
@@ -1365,7 +1374,8 @@ function createRangeControl(container, onChange, opts){
   const customWrap = container.querySelector(".range-custom");
   const fromInput = container.querySelector(".range-from");
   const toInput = container.querySelector(".range-to");
-  sel.value = opts.allowAll ? "all" : "30";
+  const defaultDays = String(opts.defaultDays || 30);
+  sel.value = opts.allowAll ? "all" : defaultDays;
 
   function emit(){
     if (sel.value === "custom"){
@@ -1393,7 +1403,7 @@ function createRangeControl(container, onChange, opts){
   fromInput.addEventListener("change", emit);
   toInput.addEventListener("change", emit);
   container.querySelector(".range-reset").addEventListener("click", () => {
-    fromInput.value = isoMinusDays(30);
+    fromInput.value = isoMinusDays(Number(defaultDays));
     toInput.value = todayIso();
     emit();
   });
@@ -1404,7 +1414,7 @@ function createRangeControl(container, onChange, opts){
   // switching accounts, so a range chosen for the old account doesn't carry
   // over silently).
   function reset(){
-    sel.value = opts.allowAll ? "all" : "30";
+    sel.value = opts.allowAll ? "all" : defaultDays;
     customWrap.style.display = "none";
     fromInput.value = "";
     toInput.value = "";
@@ -1443,7 +1453,7 @@ async function refreshForActiveAccount(){
   if (editingId) cancelEdit();
   renderHeader();
   const tasks = [refreshPayees()];
-  tasks.push(currentView === "reconcile" ? loadReconcile() : loadRegister());
+  tasks.push(currentView === "compare" ? loadCompare() : loadRegister());
   await Promise.all(tasks);
 }
 
@@ -1839,66 +1849,82 @@ function initRegisterUI(){
   );
 }
 
-/* ---------- reconcile view ---------- */
-function initReconcileUI(){
-  if (reconUIInit) return;
-  reconUIInit = true;
+/* ---------- Compare view ---------- */
+function initCompareUI(){
+  if (compareUIInit) return;
+  compareUIInit = true;
 
-  reconRangeCtl = createRangeControl($("reconRangeSlot"), (range) => {
-    reconRange = { from: range.from, to: range.to };
+  compareRangeCtl = createRangeControl($("compareRangeSlot"), (range) => {
+    compareRange = { from: range.from, to: range.to };
     clearFinderResults(); // a changed date range makes prior finder results stale
-    loadReconcile();
-  });
+    loadCompare();
+  }, { defaultDays:90 });
 }
 
 function switchView(view){
   currentView = view;
   $("registerWrap").style.display = view === "register" ? "flex" : "none";
-  $("reconcileWrap").style.display = view === "reconcile" ? "flex" : "none";
+  $("compareWrap").style.display = view === "compare" ? "flex" : "none";
   $("tabRegisterBtn").classList.toggle("active", view === "register");
-  $("tabReconcileBtn").classList.toggle("active", view === "reconcile");
+  $("tabCompareBtn").classList.toggle("active", view === "compare");
   $("tabActions").style.display = view === "register" ? "flex" : "none";
-  if (view === "reconcile"){
-    loadReconcile(); // data may have changed in the register, always refresh
+  if (view === "compare"){
+    loadCompare(); // data may have changed in the register, always refresh
   } else {
-    loadRegister(); // edits made while reconciling must never look stale
+    loadRegister(); // edits made while comparing must never look stale
   }
 }
 
-async function loadReconcile(){
+async function loadCompare(){
   if (!api() || !STATE.account) return;
-  const r = await api().get_reconcile_data(STATE.account.id, reconRange.from, reconRange.to);
-  if (!r || !r.ok) return;
-  RECON = r.rows;
-  reconSummary = r.summary;
-  renderReconcile();
-  renderReconSummary(r.summary);
+  if (compareMarksAccountId !== STATE.account.id){
+    compareMarksAccountId = STATE.account.id;
+    compareFoundIds = new Set();
+  }
+  const r = await api().get_compare_data(STATE.account.id, compareRange.from, compareRange.to);
+  if (!r || !r.ok){
+    COMPARE = [];
+    compareRegisterBalanceCents = null;
+    compareDataUnavailable = true;
+    clearFinderResults();
+    renderCompare();
+    renderCompareSummary();
+    showErrorNotice((r && r.error) || "Couldn't load the Compare data.");
+    return;
+  }
+  COMPARE = r.rows;
+  compareRegisterBalanceCents = r.register_balance_cents;
+  compareDataUnavailable = false;
+  renderCompare();
+  renderCompareSummary();
 }
 
-function renderReconcile(){
-  const table = $("reconcileTable");
-  const body = $("reconcileBody");
-  const emptyHint = $("reconEmptyHint");
-  if (!RECON.length){
+function renderCompare(){
+  const table = $("compareTable");
+  const body = $("compareBody");
+  const emptyHint = $("compareEmptyHint");
+  if (!COMPARE.length){
     table.style.display = "none";
+    emptyHint.textContent = compareDataUnavailable ? "Compare data is unavailable." : "No transactions in this range.";
     emptyHint.style.display = "block";
     return;
   }
   emptyHint.style.display = "none";
   table.style.display = "table";
-  body.innerHTML = RECON.map(reconRowHtml).join("");
+  body.innerHTML = COMPARE.map(compareRowHtml).join("");
 }
 
-function reconRowHtml(row){
+function compareRowHtml(row){
   const withdrawCell = row.amount_cents < 0
     ? `<span class="amt withdraw-amt">${esc(fmtMoney(Math.abs(row.amount_cents)))}</span>` : "";
   const depositCell = row.amount_cents > 0
     ? `<span class="amt deposit-amt">${esc(fmtMoney(row.amount_cents))}</span>` : "";
   const trCls = row.date > todayIso() ? "future" : "";
-  return `<tr data-id="${row.id}" class="${trCls}">
-    <td class="col-cleared"><label class="recon-check-wrap">
-      <input type="checkbox" class="recon-check" ${row.cleared ? "checked" : ""}
-             onchange="onReconCheckboxChange(${row.id}, this.checked)">
+  const found = compareFoundIds.has(row.id);
+  return `<tr data-id="${row.id}" class="${trCls}${found ? " compare-found" : ""}">
+    <td class="col-found"><label class="compare-check-wrap">
+      <input type="checkbox" class="compare-check" ${found ? "checked" : ""}
+             onchange="onCompareCheckboxChange(${row.id}, this.checked)"> Found
     </label></td>
     <td class="col-date">${esc(fmtDate(row.date))}</td>
     <td class="col-payee" title="${esc(row.payee)}">${esc(row.payee)}</td>
@@ -1908,44 +1934,94 @@ function reconRowHtml(row){
   </tr>`;
 }
 
-/* Only the summary numbers are re-rendered on toggle, never the whole table,
-   so scroll position and focus are preserved while checking off rows. */
-function renderReconSummary(summary){
-  const clearedEl = $("reconClearedAmt");
-  clearedEl.textContent = fmtMoney(summary.cleared_balance_cents);
-  clearedEl.className = "recon-amt" + (summary.cleared_balance_cents < 0 ? " neg" : "");
+function parseCompareBankBalance(raw){
+  const original = String(raw || "").trim();
+  if (!original) return { cents:null, error:"" };
 
-  const registerEl = $("reconRegisterAmt");
-  registerEl.textContent = fmtMoney(summary.register_balance_cents);
-  registerEl.className = "recon-amt" + (summary.register_balance_cents < 0 ? " neg" : "");
+  const match = original.match(/^([+-]?)(?:\$)?(.+)$/);
+  if (!match) return { cents:null, error:"Enter a valid bank balance, such as 1234.56." };
+  const sign = match[1] === "-" ? -1 : 1;
+  const body = match[2];
+  const decimalParts = body.split(".");
+  if (decimalParts.length > 2) return { cents:null, error:"Enter a valid bank balance, such as 1234.56." };
 
-  const diffEl = $("reconDiffAmt");
-  diffEl.textContent = fmtMoney(summary.difference_cents);
-  let diffCls = "recon-amt";
-  if (summary.difference_cents === 0) diffCls += " zero";
-  else if (summary.difference_cents < 0) diffCls += " neg";
+  const wholePart = decimalParts[0];
+  const fractionPart = decimalParts[1] || "";
+  const groupedWhole = wholePart.includes(",");
+  if ((groupedWhole && !/^\d{1,3}(?:,\d{3})+$/.test(wholePart)) ||
+      (!groupedWhole && wholePart && !/^\d+$/.test(wholePart)) ||
+      !/^\d{0,2}$/.test(fractionPart) ||
+      (!wholePart && !fractionPart)){
+    return { cents:null, error:"Enter a valid bank balance, such as 1234.56." };
+  }
+
+  const wholeDigits = wholePart.replace(/,/g, "") || "0";
+  const centsDigits = wholeDigits + (fractionPart + "00").slice(0, 2);
+  const unsignedCents = Number(centsDigits);
+  if (!Number.isSafeInteger(unsignedCents)){
+    return { cents:null, error:"That bank balance is too large." };
+  }
+  return { cents:sign * unsignedCents, error:"" };
+}
+
+function compareBankBalanceCents(){
+  return parseCompareBankBalance($("compareBankBalance").value).cents;
+}
+
+function updateFinderPlaceholder(){
+  const input = $("finderAmount");
+  if (input.value.trim()) return;
+  const difference = unexplainedDifferenceCents();
+  input.placeholder = difference
+    ? `Amount off by, e.g. ${(Math.abs(difference) / 100).toFixed(2)}`
+    : "Amount off by, e.g. 12.50";
+}
+
+function onCompareBankBalanceInput(){
+  clearFinderResults();
+  renderCompareSummary();
+}
+
+function unexplainedDifferenceCents(){
+  if (compareDataUnavailable) return null;
+  const bankBalance = compareBankBalanceCents();
+  if (bankBalance === null) return null;
+  const foundTotal = COMPARE.filter(row => !compareFoundIds.has(row.id))
+    .reduce((total, row) => total + row.amount_cents, 0);
+  return compareRegisterBalanceCents - bankBalance - foundTotal;
+}
+
+function renderCompareSummary(){
+  const bank = parseCompareBankBalance($("compareBankBalance").value);
+  $("compareBankErr").textContent = bank.error;
+  const registerEl = $("compareRegisterAmt");
+  registerEl.textContent = compareDataUnavailable ? "Unavailable" : fmtMoney(compareRegisterBalanceCents);
+  registerEl.className = "compare-amt" + (!compareDataUnavailable && compareRegisterBalanceCents < 0 ? " neg" : "");
+
+  const difference = unexplainedDifferenceCents();
+  const diffEl = $("compareDiffAmt");
+  diffEl.textContent = compareDataUnavailable ? "Unavailable" : bank.error ? "Enter valid bank balance" : difference === null ? "Enter bank balance" : fmtMoney(difference);
+  let diffCls = "compare-amt";
+  if (difference === 0) diffCls += " zero";
+  else if (difference !== null && difference < 0) diffCls += " neg";
   diffEl.className = diffCls;
+  updateFinderPlaceholder();
 }
 
-async function onReconCheckboxChange(id, checked){
-  const row = RECON.find(r => r.id === id);
-  const prevChecked = !checked; // the state the checkbox was in before this click
-  if (!api()){
-    revertReconCheckbox(id, prevChecked);
-    return;
-  }
-  const r = await api().set_transaction_cleared(id, checked);
-  if (!r || !r.ok){
-    revertReconCheckbox(id, prevChecked);
-    return;
-  }
-  if (row) row.cleared = checked;
-  reconSummary = r.summary;
-  renderReconSummary(r.summary);
+function onCompareCheckboxChange(id, checked){
+  if (checked) compareFoundIds.add(id);
+  else compareFoundIds.delete(id);
+  const row = document.querySelector(`#compareBody tr[data-id="${id}"]`);
+  if (row) row.classList.toggle("compare-found", checked);
+  clearFinderResults();
+  renderCompareSummary();
 }
-function revertReconCheckbox(id, checked){
-  const cb = document.querySelector(`#reconcileBody tr[data-id="${id}"] .recon-check`);
-  if (cb) cb.checked = checked;
+
+function resetCompareMarks(){
+  compareFoundIds.clear();
+  clearFinderResults();
+  renderCompare();
+  renderCompareSummary();
 }
 
 /* ---------- discrepancy finder ---------- */
@@ -1953,10 +2029,7 @@ function toggleFinder(){
   finderOpen = !finderOpen;
   $("finderPanel").classList.toggle("open", finderOpen);
   $("finderBody").style.display = finderOpen ? "block" : "none";
-  if (finderOpen && reconSummary && reconSummary.difference_cents){
-    // prefill with the current absolute difference, only when there is one
-    $("finderAmount").value = (Math.abs(reconSummary.difference_cents) / 100).toFixed(2);
-  }
+  updateFinderPlaceholder();
 }
 
 function clearFinderResults(){
@@ -1968,9 +2041,13 @@ async function runFinder(){
   const errEl = $("finder-err");
   errEl.textContent = "";
   const raw = $("finderAmount").value.trim();
-  if (!raw){ errEl.textContent = "Enter the amount you are off by."; return; }
+  const amount = raw || (() => {
+    const difference = unexplainedDifferenceCents();
+    return difference ? (Math.abs(difference) / 100).toFixed(2) : "";
+  })();
+  if (!amount){ errEl.textContent = "Enter the amount you are off by."; return; }
   if (!api() || !STATE.account) return;
-  const r = await api().find_discrepancy(STATE.account.id, raw, reconRange.from, reconRange.to);
+  const r = await api().find_compare_matches(STATE.account.id, amount, compareRange.from, compareRange.to);
   if (!r || !r.ok){
     errEl.textContent = (r && r.error) || "Something went wrong.";
     $("finderResults").innerHTML = "";
@@ -1979,18 +2056,16 @@ async function runFinder(){
   renderFinderResults(r);
 }
 
-/* A transaction listed by the finder is only in the visible reconcile table
+/* A transaction listed by the finder is only in the visible Compare table
    when it falls inside the current range (exact/half search full history). */
 function finderTxRowHtml(row){
-  const inRange = RECON.some(t => t.id === row.id);
+  const inRange = COMPARE.some(t => t.id === row.id);
   const titleAttr = inRange ? "" : ` title="Outside the current date range"`;
-  // A cleared marker lets the user dismiss a coincidental match on a
-  // transaction that's already reconciled, without leaving this panel.
-  const clearedMark = row.cleared
-    ? `<span class="finder-tx-cleared is-cleared" title="Cleared">&#10003;</span>`
-    : `<span class="finder-tx-cleared not-cleared" title="Not cleared">&#9675;</span>`;
-  return `<div class="finder-tx-row" onclick="focusReconRow(${row.id})"${titleAttr}>
-    ${clearedMark}
+  const foundMark = compareFoundIds.has(row.id)
+    ? `<span class="finder-tx-found is-found" title="Found">&#10003;</span>`
+    : `<span class="finder-tx-found not-found" title="Not found">&#9675;</span>`;
+  return `<div class="finder-tx-row" onclick="focusCompareRow(${row.id})"${titleAttr}>
+    ${foundMark}
     <span class="finder-tx-date">${esc(fmtDate(row.date))}</span>
     <span class="finder-tx-payee" title="${esc(row.payee)}">${esc(row.payee)}</span>
     <span class="finder-tx-amt">${esc(fmtMoney(row.amount_cents))}</span>
@@ -2007,13 +2082,6 @@ function finderGroupHtml(title, hint, bodyHtml){
 
 function renderFinderResults(r){
   const groups = [];
-  if (r.unchecked_match){
-    const n = r.unchecked_match.count;
-    const hint = n === 1
-      ? "This amount equals your 1 unchecked transaction. If you have checked off everything on the bank statement, that transaction accounts for the whole difference."
-      : `This amount equals the combined total of all ${n} unchecked transactions. If you have checked off everything on the bank statement, those transactions account for the whole difference.`;
-    groups.push(finderGroupHtml("Unchecked transactions", hint, ""));
-  }
   if (r.exact.length){
     groups.push(finderGroupHtml(
       "Exact matches",
@@ -2055,12 +2123,12 @@ function renderFinderResults(r){
   $("finderResults").innerHTML = groups.join("");
 }
 
-function focusReconRow(id){
-  const tr = document.querySelector(`#reconcileBody tr[data-id="${id}"]`);
+function focusCompareRow(id){
+  const tr = document.querySelector(`#compareBody tr[data-id="${id}"]`);
   if (!tr) return; // outside the current range: nothing on screen to point to
   tr.scrollIntoView({ block: "center", behavior: "smooth" });
-  tr.classList.add("recon-flash");
-  setTimeout(() => tr.classList.remove("recon-flash"), 1200);
+  tr.classList.add("compare-flash");
+  setTimeout(() => tr.classList.remove("compare-flash"), 1200);
 }
 
 /* ---------- account settings modal ---------- */
@@ -2206,21 +2274,24 @@ async function pickAccount(id){
 
   // Filters, search, and the chosen date range are per-account context;
   // carrying them over from the account just left would silently narrow (or
-  // empty) the new account's register/reconcile until the user notices.
+  // empty) the new account's register/Compare views until the user notices.
   if (editingId) cancelEdit();
   currentSearch = "";
   $("searchInput").value = "";
   $("searchClear").style.display = "none";
   if (searchDebounceTimer){ clearTimeout(searchDebounceTimer); searchDebounceTimer = null; }
   TX = []; // cleared before the filter reset below repaints, so nothing renders against the old account's rows
+  compareFoundIds.clear();
+  compareMarksAccountId = STATE.account.id;
+  $("compareBankBalance").value = "";
   setDirFilter("all");
   clearFinderResults();
   renderHeader();
   // Each reset fires its control's onChange, which reloads that view once;
-  // together they cover both register and reconcile without a second,
+  // together they cover both register and Compare without a second,
   // redundant load from refreshForActiveAccount.
   if (registerRangeCtl) registerRangeCtl.reset();
-  if (reconRangeCtl) reconRangeCtl.reset();
+  if (compareRangeCtl) compareRangeCtl.reset();
   await refreshPayees();
 }
 
@@ -2521,9 +2592,9 @@ function showRegisterView(){
   $("firstrunWrap").style.display = "none";
   $("viewTabs").style.display = "flex";
   $("registerWrap").style.display = "flex";
-  $("reconcileWrap").style.display = "none";
+  $("compareWrap").style.display = "none";
   $("tabRegisterBtn").classList.add("active");
-  $("tabReconcileBtn").classList.remove("active");
+  $("tabCompareBtn").classList.remove("active");
   $("tabActions").style.display = "flex";
   currentView = "register";
   $("headCenter").style.display = "flex";
@@ -2532,7 +2603,7 @@ function showRegisterView(){
 }
 function showFirstRunView(){
   $("registerWrap").style.display = "none";
-  $("reconcileWrap").style.display = "none";
+  $("compareWrap").style.display = "none";
   $("viewTabs").style.display = "none";
   $("headCenter").style.display = "none";
   $("firstrunWrap").style.display = "flex";
@@ -2999,7 +3070,7 @@ async function boot(){
   }
 
   initRegisterUI();
-  initReconcileUI();
+  initCompareUI();
 
   if (STATE.hasAccount){
     showRegisterView();

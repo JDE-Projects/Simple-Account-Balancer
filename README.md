@@ -32,8 +32,9 @@ If you enjoyed this project and would like to buy me a coffee, check out my [Ko-
   custom range), plus an All | Withdraws | Deposits toggle for viewing one
   side of the register. Filters only change what's shown: balances always
   reflect the full register.
-- Reconcile view with cleared checkboxes and a discrepancy finder that hunts
-  down the amount you're off by.
+- Compare view for matching a selected range against an optional bank posted
+  balance. Found marks are session-only, and the discrepancy finder helps
+  track down any unexplained difference.
 - Multiple accounts with a simple switcher.
 - CSV export for any date range. Each file is self-identifying: the first
   row names the account, the range, and the export date.
@@ -105,9 +106,10 @@ pipeline from this repo. You can also check the file against the published
    register, and the day it pays. The app enters them for you from then on.
    For a bill whose amount changes each month, tick "Variable amount": each
    posting shows an estimate marker until you confirm the real figure.
-5. Use the Reconcile tab to check entries off against your bank statement.
-   If the numbers disagree, type the difference into the discrepancy finder
-   to help track it down.
+5. Use the Compare tab with your bank's posted balance. Mark entries Found as
+   you match them. Marks are temporary and never change the register. If the
+   unexplained difference is nonzero, the finder uses it automatically unless
+   you enter a different amount.
 6. Export any date range to CSV from the Export CSV button in the register view.
 
 ## Security and privacy
