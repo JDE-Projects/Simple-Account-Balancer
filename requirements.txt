@@ -4,7 +4,7 @@
 # plus truststore for TLS via the OS certificate store.
 # Dependabot opens review-PRs when newer releases appear.
 pywebview==6.2.1
-PySide6==6.11.1
+PySide6==6.11.2
 qtpy==2.4.3
 pyinstaller==6.22.0
 truststore==0.10.4
