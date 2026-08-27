@@ -9,6 +9,7 @@ not legal advice.
 # Always bundled (every desktop app)
 PySide6 / Qt     LGPL-3.0       https://www.qt.io/licensing/
 pywebview        BSD-3-Clause   https://github.com/r0x0r/pywebview
+qtpy             MIT            https://github.com/spyder-ide/qtpy
 truststore       MIT            https://github.com/sethmlarson/truststore
 Sora (font)      OFL-1.1        https://github.com/sora-xor/sora-font
 JetBrains Mono   OFL-1.1        https://github.com/JetBrains/JetBrainsMono
