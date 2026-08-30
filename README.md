@@ -5,7 +5,7 @@ happens, so the register is ahead of the bank and is the real answer to "how
 much money do I actually have." For anyone who kept a check register or a
 balance spreadsheet.
 
-Built by [JDE-Projects](https://github.com/JDE-Projects).
+Built by [JDE-Projects](https://jde-projects.com), home of the Simple X Tools suite.
 
 If you enjoyed this project and would like to buy me a coffee, check out my [Ko-fi](https://ko-fi.com/jdeprojects).
 
@@ -115,11 +115,11 @@ pipeline from this repo. You can also check the file against the published
 ## Security and privacy
 - Everything stays in the SQLite file next to the exe.
 - No accounts, cloud, telemetry, or bank connections, ever.
-- The only network call is the version check against GitHub Releases.
 - Optional debug log, off by default. When on, it writes
   `Debug_Log_MMDDYYYY_HHMMSS.txt` next to the app. It records actions and
   errors only, never payees, amounts, or balances, so it is safe to attach
   to a bug report.
+- **Network use.** Other than the job you ask of it, this app makes one automatic network call: a check to GitHub for a newer release (at startup and when you press **Check for updates**), which sends only a version request. It collects and sends no personal data, usage data, or analytics.
 
 ## A note on how this was built
 This project was built with AI assistance. The design decisions, feature
