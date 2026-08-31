@@ -27,8 +27,6 @@ import socket
 import sqlite3
 import ssl
 import sys
-import threading
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
