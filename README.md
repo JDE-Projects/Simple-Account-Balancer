@@ -91,7 +91,7 @@ pipeline from this repo. You can also check the file against the published
 - `pip install -r requirements.txt` (pinned `pywebview`, `PySide6`, `qtpy`,
   `pyinstaller`; keep PyQt6 uninstalled so the LGPL binding is the one bundled).
 - Keep `simple_account_balancer.py`, `simple_account_balancer-UI.html`, the
-  `fonts/` folder, the `.ico`, `.png`, and `-splash.png` together.
+  `fonts/` folder, the `.ico`, and `.png` together.
 - Run from source: `python simple_account_balancer.py`
 - Build the .exe: `Build_Simple_Account_Balancer.bat` -> `dist\Simple Account Balancer\Simple Account Balancer.exe`
 

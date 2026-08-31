@@ -35,7 +35,6 @@ echo Building executable (onedir, so the bundled Qt stays replaceable)...
 set QT_API=pyside6
 pyinstaller --onedir --windowed --name "Simple Account Balancer" ^
   --icon "simple_account_balancer.ico" ^
-  --splash "simple_account_balancer-splash.png" ^
   --add-data "simple_account_balancer-UI.html;." ^
   --add-data "simple_account_balancer.png;." ^
   --add-data "fonts;fonts" ^
