@@ -1,0 +1,12 @@
+{
+  "entry": "simple_account_balancer.py",
+  "mutex": "JDE_SimpleAccountBalancer_SingleInstance",
+  "window_title": "Simple Account Balancer",
+  "page_url_contains": "simple_account_balancer-UI.html",
+  "scenarios": {
+    "smoke": {
+      "script": "tools/ui_check/smoke.js",
+      "timeout_s": 120
+    }
+  }
+}
