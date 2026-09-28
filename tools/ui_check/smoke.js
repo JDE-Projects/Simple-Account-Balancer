@@ -8,18 +8,6 @@
 // Does not cover: autopays, categories, compare-to-bank, export, backups,
 // or the update check. Those stay for a person to check by hand.
 
-async function setField(selector, text, { type, evaluate }) {
-  // Clearing here (not by guessing how many Backspaces a click's caret
-  // position needs) is setup, not simulated typing; the value the check
-  // actually cares about still goes in through type()'s real click and real
-  // keystrokes right after.
-  await evaluate(
-    `(function(){const el=document.querySelector(${JSON.stringify(selector)});` +
-      `el.value="";el.dispatchEvent(new Event("input",{bubbles:true}));})()`
-  );
-  await type(selector, text);
-}
-
 function fmtMoney(cents) {
   const neg = cents < 0;
   const abs = Math.abs(cents);
@@ -41,17 +29,14 @@ export default async function smoke(helpers) {
 
   // b) first-run setup, filled in by typing.
   await waitFor("document.getElementById('firstrunWrap').style.display !== 'none'", 10000);
-  await setField("#fr-name", "Checking", helpers);
-  await setField("#fr-balance", "500.00", helpers);
-  // fr-date is a native <input type="date">: its segments only respond to
-  // real per-key digit presses, not CDP's Input.insertText (confirmed: text
-  // typed this way lands nowhere and the field keeps its prior value), and
-  // cdp.mjs's press() only knows the small fixed set of keys in KEY_TABLE
-  // (no digits), which is out of scope for this check to extend. The field
-  // is left at its real default, today's date, filled in by the page itself.
+  await type("#fr-name", "Checking");
+  await type("#fr-balance", "500.00");
+  // fr-date is a native <input type="date">: type() fills it with real
+  // per-character key events, starting from its first segment, the same
+  // way a person would type a date that isn't today's default.
+  await type("#fr-date", "01152026");
   const dateValue = await evaluate("document.getElementById('fr-date').value");
-  const pageToday = await evaluate("todayIso()");
-  check("starting date defaults to today", dateValue === pageToday, `${dateValue} vs ${pageToday}`);
+  check("starting date was typed in", dateValue === "2026-01-15", dateValue);
   await click(".firstrun-wrap .btn.primary");
   const registerShown = await waitFor(
     "document.getElementById('registerWrap').style.display !== 'none'", 10000
@@ -59,18 +44,22 @@ export default async function smoke(helpers) {
   check("register appears after setup", registerShown);
   const startingBalanceText = await evaluate("document.getElementById('balanceBig').textContent");
   check("register shows the starting balance", startingBalanceText === fmtMoney(50000), startingBalanceText);
+  const cfgAfterCreate = await evaluate("api().get_config()");
+  check("account's starting date matches what was typed",
+    cfgAfterCreate.account && cfgAfterCreate.account.starting_date === "2026-01-15",
+    JSON.stringify(cfgAfterCreate.account && cfgAfterCreate.account.starting_date));
 
   // c) core workflow: one debit, one credit, through the UI.
   const rowCountBefore = await evaluate("document.querySelectorAll('#registerBody tr').length");
 
-  await setField("#f-payee", "Grocery store", helpers);
-  await setField("#f-amount", "40.25", helpers);
+  await type("#f-payee", "Grocery store");
+  await type("#f-amount", "40.25");
   await click("#entrySubmitBtn");
   await waitFor(`document.querySelectorAll('#registerBody tr').length === ${rowCountBefore + 1}`, 10000);
 
   await click("#dirSeg .deposit");
-  await setField("#f-payee", "Paycheck", helpers);
-  await setField("#f-amount", "125.50", helpers);
+  await type("#f-payee", "Paycheck");
+  await type("#f-amount", "125.50");
   await click("#entrySubmitBtn");
   await waitFor(`document.querySelectorAll('#registerBody tr').length === ${rowCountBefore + 2}`, 10000);
 
@@ -82,8 +71,8 @@ export default async function smoke(helpers) {
   // d) error path: an invalid amount is refused, nothing saved.
   await click("#dirSeg .withdraw");
   const rowCountBeforeBad = await evaluate("document.querySelectorAll('#registerBody tr').length");
-  await setField("#f-payee", "Bad amount", helpers);
-  await setField("#f-amount", "not a number", helpers);
+  await type("#f-payee", "Bad amount");
+  await type("#f-amount", "not a number");
   await click("#entrySubmitBtn");
   const errShown = await waitFor("document.getElementById('entry-err').textContent.trim().length > 0", 5000)
     .then(() => true).catch(() => false);
@@ -93,7 +82,7 @@ export default async function smoke(helpers) {
   const rowCountAfterBad = await evaluate("document.querySelectorAll('#registerBody tr').length");
   check("nothing was saved for the invalid amount", rowCountAfterBad === rowCountBeforeBad,
     `${rowCountBeforeBad} -> ${rowCountAfterBad}`);
-  await setField("#f-amount", "", helpers);
+  await type("#f-amount", "");
 
   // e) theme round trip, screenshot of each, confirmed saved through Python.
   const startLight = await evaluate("document.body.classList.contains('light')");
