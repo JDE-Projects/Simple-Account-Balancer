@@ -36,6 +36,8 @@ import urllib.request
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
+from app.debug_log import DebugLog
+
 import webview
 
 APP_VERSION = "1.9.0"
@@ -850,8 +852,10 @@ class Api:
         self._database_call_depth = 0
         self._database_failed = False
         self._db_path = None
-        self._debug = False
-        self._debug_path = None
+        self._debug_log = DebugLog(
+            app_dir(), "Simple Account Balancer",
+            redact=redact_log_text, on_warning=self._on_debug_log_warning,
+        )
         self.backup_notice = None
         self.autopay_notice = None
         self.autopay_notice_is_error = False
@@ -2432,27 +2436,43 @@ class Api:
 
     # --- debug log --------------------------------------------------------------
     def set_debug(self, on: bool):
-        self._debug = bool(on)
-        if self._debug and not self._debug_path:
-            stamp = datetime.datetime.now().strftime("%m%d%Y_%H%M%S")
-            self._debug_path = os.path.join(app_dir(), f"Debug_Log_{stamp}.txt")
-            self.log("Debug log started")
-        return {"ok": True}
+        """Turn the debug log on or off. "enabled" is the real state after
+        the call, so the toggle can flip back if the log file couldn't be
+        created; the reason arrives through onDebugLogWarning."""
+        ok = self._debug_log.set_enabled(on)
+        return {"ok": ok, "enabled": self._debug_log.is_enabled()}
 
     def log(self, msg: str):
         # Privacy rule for every call site: users share this log for bug
         # reports, so lines may carry ids, dates, and counts, never file
         # paths, payees, amounts, balances, or user-entered names. Every line
         # also passes through redact_log_text, which catches paths and quoted
-        # values inside error messages.
-        if not self._debug or not self._debug_path:
+        # values inside error messages. Size limits, old-log pruning, and
+        # write failures are handled by app/debug_log.py.
+        self._debug_log.log(msg)
+
+    def _on_debug_log_warning(self, message: str):
+        """Show a debug log problem (failed write, old log that couldn't be
+        deleted) in the window. Before the window exists, at launch, it joins
+        the backup notice shown on startup. Once the window is up it is
+        pushed to the page from a separate thread, so a warning raised while
+        the window's own thread is busy can never stall it."""
+        window = self._window
+        if window is None:
+            self.backup_notice = f"{self.backup_notice} {message}" if self.backup_notice else message
             return
-        try:
-            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            with open(self._debug_path, "a", encoding="utf-8") as f:
-                f.write(f"[{ts}] {redact_log_text(msg)}\n")
-        except Exception:
-            pass
+        script = (
+            "window.onDebugLogWarning && window.onDebugLogWarning("
+            f"{json.dumps(message)}, {json.dumps(self._debug_log.is_enabled())})"
+        )
+
+        def _push():
+            try:
+                window.evaluate_js(script)
+            except Exception:
+                pass
+
+        threading.Thread(target=_push, daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
@@ -2800,6 +2820,7 @@ def main():
     db_path = os.path.join(folder, DB_FILENAME)
     api = Api()
     api.set_db_path(db_path)
+    api._debug_log.prune()
     removed_restore_count, stale_restore_failures = _remove_stale_restore_files(folder)
     if removed_restore_count:
         api.log(f"Launch cleanup removed {removed_restore_count} stale restore file(s) in the app folder")
@@ -2877,6 +2898,10 @@ def main():
         webview.start(gui="qt", icon=resource_path("simple_account_balancer.png"))
     except TypeError:
         webview.start(gui="qt")
+
+    # The window is gone, so debug log warnings from here on must not try to
+    # reach it.
+    api.set_window(None)
 
     # api._conn may no longer be the connection opened above (restore_backup
     # swaps in a new one mid-session), so close through the Api, not a stale

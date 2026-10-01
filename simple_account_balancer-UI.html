@@ -3015,7 +3015,17 @@ async function confirmDeleteAutopay(){
 
 /* ---------- misc bridge helpers ---------- */
 function openUrl(u){ if (api()) api().open_url(u); }
-async function onDebugToggle(on){ if (api()) await api().set_debug(on); }
+async function onDebugToggle(on){
+  if (!api()) return;
+  const r = await api().set_debug(on);
+  if (r) $("dbgToggle").checked = !!r.enabled;
+}
+/* Called from Python when the debug log can't write or can't delete an old
+   log. A failed write turns logging off, so the toggle follows the real state. */
+window.onDebugLogWarning = function(text, enabled){
+  showErrorNotice(text);
+  $("dbgToggle").checked = !!enabled;
+};
 
 /* ---------- error notice (bottom bar, dismissible for the session) ----------
    Hides the backup/autopay notices whenever it appears: bar-center doesn't

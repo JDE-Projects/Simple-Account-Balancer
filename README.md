@@ -121,8 +121,11 @@ pipeline from this repo. You can also check the file against the published
 - Everything stays in the SQLite file next to the exe.
 - No accounts, cloud, telemetry, or bank connections, ever.
 - Optional debug log, off by default. When on, it writes
-  `Debug_Log_MMDDYYYY_HHMMSS.txt` next to the app. It records actions and
-  errors with record numbers, dates, and counts. It never records payees,
+  `Debug_Log_MMDDYYYY_HHMMSS.txt` next to the app. Each file stops at 5 MiB
+  and logging carries on in a new one. The app keeps the current file plus
+  the three newest older ones (20 MiB at most) and deletes the rest. If the
+  log can't be written, logging turns off and the app says so. It records
+  actions and errors with record numbers, dates, and counts. It never records payees,
   categories, notes, amounts, balances, or account names, and any file path
   or quoted value inside an error message is replaced with `<path>` or
   `<text>`. It does show when you used the app and the dates of transactions
