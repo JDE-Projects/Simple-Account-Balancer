@@ -51,11 +51,18 @@ DEFAULT_RANGE_DAYS = 30
 MIN_WINDOW_W = 680
 MIN_WINDOW_H = 650
 
-# Regular backups: balancer_YYYYMMDD_HHMMSS.db
-# Pre-restore safety backups: balancer_prerestore_YYYYMMDD_HHMMSS.db
-# The optional "prerestore_" is captured as part of the match but not its own
-# group, since both variants share the same trailing date/time.
-BACKUP_FILENAME_RE = re.compile(r"^balancer_(?:prerestore_)?(\d{8})_(\d{6})\.db$")
+# Regular backups: balancer_YYYYMMDD_HHMMSS_ffffff.db
+# Pre-restore safety backups: balancer_prerestore_YYYYMMDD_HHMMSS_ffffff.db
+# The _ffffff microseconds keep two backups in the same second apart. Names
+# without it (balancer_YYYYMMDD_HHMMSS.db) still match, and still sort in time
+# order, since "." sorts before "_". The optional "prerestore_" is not its own
+# group, since both variants share the same trailing date/time. Listing,
+# pruning, and restore accept only names matching this exactly, so other files
+# in a shared backup folder are never shown or deleted. ASCII digits only, and
+# \Z rather than $ so a trailing newline can't slip through.
+BACKUP_FILENAME_RE = re.compile(
+    r"^balancer_(?:prerestore_)?([0-9]{8})_([0-9]{6})(?:_([0-9]{6}))?\.db\Z"
+)
 
 SEED_CATEGORIES = [
     "Auto", "Charity", "Dining", "Entertainment", "Fees", "Gas", "Gifts",
@@ -1736,7 +1743,7 @@ class Api:
                 names = []
             items = []
             for name in names:
-                if not (name.startswith("balancer_") and name.endswith(".db")):
+                if not BACKUP_FILENAME_RE.match(name):
                     continue
                 full_path = os.path.join(backups_dir, name)
                 items.append({
@@ -1745,7 +1752,7 @@ class Api:
                     "is_prerestore": name.startswith("balancer_prerestore_"),
                     "size_bytes": os.path.getsize(full_path) if os.path.isfile(full_path) else 0,
                 })
-            items.sort(key=lambda it: it["timestamp"], reverse=True)
+            items.sort(key=lambda it: (it["timestamp"], it["filename"]), reverse=True)
             return {"ok": True, "backups": items}
         except Exception as e:
             self.log(f"list_backups failed: {e}")
@@ -1786,7 +1793,7 @@ class Api:
 
             db_path = self._db_path
             backups_dir, _ = effective_backup_dir()
-            prerestore_path = _make_prerestore_backup(db_path, backups_dir)
+            prerestore_path, prune_failed = _make_prerestore_backup(db_path, backups_dir)
             if prerestore_path is None:
                 return {"ok": False, "error": "Couldn't take a safety backup, so the restore was cancelled."}
 
@@ -1811,16 +1818,24 @@ class Api:
                 f"Restored from backup {os.path.basename(full_path)} "
                 f"(safety backup: {os.path.basename(prerestore_path)})"
             )
-            return self.get_config()
+            result = self.get_config()
+            if prune_failed:
+                self.log(f"Pre-restore prune couldn't delete {len(prune_failed)} file(s) in {backups_dir}")
+                result["warning"] = _prune_failed_message(len(prune_failed))
+            return result
         except Exception as e:
             self.log(f"restore_backup failed: {e}")
             return {"ok": False, "error": "Couldn't restore that backup."}
 
     # --- misc bridge helpers --------------------------------------------------
     def open_url(self, url: str):
-        """Open a link in the system browser, never by navigating the app window."""
+        """Open a link in the system browser, never by navigating the app window.
+        Only the JDE-Projects website is allowed (see _is_allowed_url)."""
         import webbrowser
 
+        if not _is_allowed_url(url):
+            self.log("open_url refused an address outside the allowed site")
+            return {"ok": False, "error": "That link isn't allowed."}
         webbrowser.open(url)
         return {"ok": True}
 
@@ -1928,74 +1943,108 @@ def _clamp_backup_keep(value) -> int:
     return max(BACKUP_KEEP_MIN, min(BACKUP_KEEP_MAX, n))
 
 
+ALLOWED_URL_HOST = "jde-projects.com"
+
+
+def _is_allowed_url(url) -> bool:
+    """True only for a plain https address on the JDE-Projects website: no
+    other host, scheme, port, login part, or whitespace/control characters."""
+    if not isinstance(url, str) or any(c.isspace() or ord(c) < 32 for c in url):
+        return False
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return False
+    # Comparing the whole netloc rules out ports and user@host tricks.
+    return parts.scheme == "https" and parts.netloc == ALLOWED_URL_HOST
+
+
 def _list_backup_files(backups_dir: str, prerestore: bool) -> list:
-    """Filenames sorted oldest first. Regular backups exclude prerestore
-    ones even though both start with 'balancer_', since the fixed-width
-    timestamp suffix makes lexical order match chronological order either way."""
+    """Exact backup filenames (BACKUP_FILENAME_RE) sorted oldest first, so
+    pruning never touches look-alike files. Regular backups exclude prerestore
+    ones; the fixed-width timestamp makes lexical order match chronological
+    order within each pool."""
     try:
         names = os.listdir(backups_dir)
     except Exception:
         return []
-    if prerestore:
-        return sorted(n for n in names if n.startswith("balancer_prerestore_") and n.endswith(".db"))
     return sorted(
         n for n in names
-        if n.startswith("balancer_") and n.endswith(".db") and not n.startswith("balancer_prerestore_")
+        if BACKUP_FILENAME_RE.match(n) and n.startswith("balancer_prerestore_") == prerestore
     )
 
 
-def _prune_backups(backups_dir: str, keep: int):
-    files = _list_backup_files(backups_dir, prerestore=False)
+def _prune_pool(backups_dir: str, keep: int, prerestore: bool) -> list:
+    """Delete the oldest backups in one pool beyond `keep`. Returns the
+    filenames that couldn't be deleted, so the caller can say so: old copies
+    of financial data piling up unseen is the failure this guards against."""
+    files = _list_backup_files(backups_dir, prerestore=prerestore)
+    failed = []
     for old in files[:-keep] if len(files) > keep else []:
         try:
             os.remove(os.path.join(backups_dir, old))
         except Exception:
-            pass
+            failed.append(old)
+    return failed
 
 
-def _prune_prerestore_backups(backups_dir: str, keep: int = PRERESTORE_KEEP):
-    files = _list_backup_files(backups_dir, prerestore=True)
-    for old in files[:-keep] if len(files) > keep else []:
-        try:
-            os.remove(os.path.join(backups_dir, old))
-        except Exception:
-            pass
+def _prune_backups(backups_dir: str, keep: int) -> list:
+    return _prune_pool(backups_dir, keep, prerestore=False)
 
 
-def _make_backup(db_path: str, backups_dir: str, keep: int = BACKUP_KEEP) -> bool:
-    """Copy the database into backups_dir as balancer_YYYYMMDD_HHMMSS.db,
+def _prune_prerestore_backups(backups_dir: str, keep: int = PRERESTORE_KEEP) -> list:
+    return _prune_pool(backups_dir, keep, prerestore=True)
+
+
+def _new_backup_path(backups_dir: str, prefix: str) -> str:
+    """A path for a new backup named <prefix>YYYYMMDD_HHMMSS_ffffff.db that
+    doesn't exist yet, so a backup never overwrites an earlier one."""
+    while True:
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        dest = os.path.join(backups_dir, f"{prefix}{stamp}.db")
+        if not os.path.exists(dest):
+            return dest
+
+
+def _make_backup(db_path: str, backups_dir: str, keep: int = BACKUP_KEEP) -> tuple:
+    """Copy the database into backups_dir as balancer_YYYYMMDD_HHMMSS_ffffff.db,
     keeping only the newest `keep` regular backups. Pre-restore safety
-    backups are a separate pool; see _make_prerestore_backup."""
+    backups are a separate pool; see _make_prerestore_backup. Returns
+    (success, filenames the prune couldn't delete)."""
     try:
         os.makedirs(backups_dir, exist_ok=True)
-        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        dest = os.path.join(backups_dir, f"balancer_{stamp}.db")
-        shutil.copy2(db_path, dest)
-        _prune_backups(backups_dir, keep)
-        return True
+        shutil.copy2(db_path, _new_backup_path(backups_dir, "balancer_"))
     except Exception:
-        return False
+        return False, []
+    return True, _prune_backups(backups_dir, keep)
 
 
-def _make_prerestore_backup(db_path: str, backups_dir: str):
+def _make_prerestore_backup(db_path: str, backups_dir: str) -> tuple:
     """Copy the current live database aside before a restore overwrites it,
-    as balancer_prerestore_YYYYMMDD_HHMMSS.db. Returns the new file's full
-    path, or None on failure. Kept to the newest PRERESTORE_KEEP, a pool
-    separate from (and never counted against) the regular backup_keep limit."""
+    as balancer_prerestore_YYYYMMDD_HHMMSS_ffffff.db. Kept to the newest
+    PRERESTORE_KEEP, a pool separate from (and never counted against) the
+    regular backup_keep limit. Returns (the new file's full path or None on
+    failure, filenames the prune couldn't delete)."""
     try:
         os.makedirs(backups_dir, exist_ok=True)
-        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        dest = os.path.join(backups_dir, f"balancer_prerestore_{stamp}.db")
+        dest = _new_backup_path(backups_dir, "balancer_prerestore_")
         shutil.copy2(db_path, dest)
-        _prune_prerestore_backups(backups_dir)
-        return dest
     except Exception:
-        return None
+        return None, []
+    return dest, _prune_prerestore_backups(backups_dir)
+
+
+def _prune_failed_message(count: int) -> str:
+    """Short enough for the bottom bar; the folder itself is shown in
+    Account settings, and the debug log line carries it."""
+    noun = "backup" if count == 1 else "backups"
+    return f"Couldn't delete {count} old {noun}. The backup folder may be read-only."
 
 
 def _parse_backup_timestamp(filename: str, full_path: str) -> str:
     """The timestamp encoded in a balancer_* filename, falling back to the
-    file's mtime if the name doesn't parse. Always returns an ISO string."""
+    file's mtime if the name doesn't parse. Always returns an ISO string to
+    the second; list_backups breaks same-second ties by filename."""
     m = BACKUP_FILENAME_RE.match(filename)
     if m:
         try:
@@ -2014,7 +2063,8 @@ def _run_backup_with_fallback(db_path: str) -> tuple:
     configured but is missing or unwritable right now, fall back to the
     default local folder for just this backup; the pref is left alone since
     the folder (e.g. a NAS) may only be temporarily offline. Never raises.
-    Returns (success, used_fallback, actual_dir)."""
+    Returns (success, used_fallback, actual_dir, filenames the prune
+    couldn't delete)."""
     default_dir = os.path.join(app_dir(), BACKUP_DIRNAME)
     try:
         prefs = load_prefs()
@@ -2024,10 +2074,10 @@ def _run_backup_with_fallback(db_path: str) -> tuple:
         if is_custom and not (os.path.isdir(target_dir) and _writable_check(target_dir)):
             target_dir = default_dir
             used_fallback = True
-        ok = _make_backup(db_path, target_dir, keep)
-        return ok, used_fallback, target_dir
+        ok, prune_failed = _make_backup(db_path, target_dir, keep)
+        return ok, used_fallback, target_dir, prune_failed
     except Exception:
-        return False, False, default_dir
+        return False, False, default_dir, []
 
 
 def _show_backup_fallback_notice(actual_dir: str):
@@ -2037,6 +2087,14 @@ def _show_backup_fallback_notice(actual_dir: str):
     )
     try:
         ctypes.windll.user32.MessageBoxW(0, msg, "Simple Account Balancer", 0x40)  # MB_ICONINFORMATION
+    except Exception:
+        pass
+
+
+def _show_prune_failed_notice(count: int, folder: str):
+    msg = f"The closing backup was saved. {_prune_failed_message(count)}\n\nFolder: {folder}"
+    try:
+        ctypes.windll.user32.MessageBoxW(0, msg, "Simple Account Balancer", 0x30)  # MB_ICONWARNING
     except Exception:
         pass
 
@@ -2163,7 +2221,7 @@ def main():
     # pre-migration copy: open_db's schema migrations must never run first
     # and land in the backup we'd use to recover from them.
     if db_existed_before:
-        ok, used_fallback, actual_dir = _run_backup_with_fallback(db_path)
+        ok, used_fallback, actual_dir, prune_failed = _run_backup_with_fallback(db_path)
         if ok:
             api.log(f"Launch backup created in {actual_dir}")
         else:
@@ -2176,6 +2234,10 @@ def main():
             api.backup_notice = (
                 f"Backup folder wasn't reachable. Today's backup was saved to {actual_dir} instead."
             )
+        if ok and prune_failed:
+            api.log(f"Launch prune couldn't delete {len(prune_failed)} file(s) in {actual_dir}")
+            prune_msg = _prune_failed_message(len(prune_failed))
+            api.backup_notice = f"{api.backup_notice} {prune_msg}" if api.backup_notice else prune_msg
             api.log(f"Backup folder unreachable at launch, fell back to {actual_dir}")
 
     try:
@@ -2224,7 +2286,7 @@ def main():
     # backup failure here can never block shutdown.
     try:
         if os.path.exists(db_path):
-            ok, used_fallback, actual_dir = _run_backup_with_fallback(db_path)
+            ok, used_fallback, actual_dir, prune_failed = _run_backup_with_fallback(db_path)
             if ok:
                 api.log(f"Exit backup created in {actual_dir}")
             else:
@@ -2235,6 +2297,9 @@ def main():
                 _show_backup_failed_notice(actual_dir)
             elif used_fallback:
                 _show_backup_fallback_notice(actual_dir)
+            if ok and prune_failed:
+                api.log(f"Exit prune couldn't delete {len(prune_failed)} file(s) in {actual_dir}")
+                _show_prune_failed_notice(len(prune_failed), actual_dir)
     except Exception:
         pass
 

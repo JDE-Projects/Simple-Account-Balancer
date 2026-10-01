@@ -2415,14 +2415,24 @@ function renderRestoreList(){
     list.innerHTML = `<div class="restore-empty">No backups found yet.</div>`;
     return;
   }
-  list.innerHTML = RESTORE.backups.map(b => {
-    const dateStr = formatBackupDate(b.timestamp);
-    const tag = b.is_prerestore ? `<span class="restore-row-tag">(pre-restore)</span>` : "";
-    return `<div class="restore-row" onclick="previewRestoreClick('${b.filename}')">
-      <span class="restore-row-date">${esc(dateStr)}</span>
-      ${tag}
-    </div>`;
-  }).join("");
+  // Built as elements with a click listener, never as markup with the
+  // filename inside, so no filename can become script.
+  list.replaceChildren(...RESTORE.backups.map(b => {
+    const row = document.createElement("div");
+    row.className = "restore-row";
+    const date = document.createElement("span");
+    date.className = "restore-row-date";
+    date.textContent = formatBackupDate(b.timestamp);
+    row.append(date);
+    if (b.is_prerestore){
+      const tag = document.createElement("span");
+      tag.className = "restore-row-tag";
+      tag.textContent = "(pre-restore)";
+      row.append(" ", tag);
+    }
+    row.addEventListener("click", () => previewRestoreClick(b.filename));
+    return row;
+  }));
 }
 async function previewRestoreClick(filename){
   const errEl = $("restore-list-err");
@@ -2486,6 +2496,7 @@ async function confirmRestore(){
   applyConfig(r);
   closeAccountModal();
   await Promise.all([refreshForActiveAccount(), refreshCategories()]);
+  if (r.warning) showBackupNotice(r.warning);
 }
 
 /* ---------- account settings modal, delete account ---------- */
