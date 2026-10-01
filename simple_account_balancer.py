@@ -54,8 +54,11 @@ MIN_WINDOW_H = 650
 # Regular backups: balancer_YYYYMMDD_HHMMSS.db
 # Pre-restore safety backups: balancer_prerestore_YYYYMMDD_HHMMSS.db
 # The optional "prerestore_" is captured as part of the match but not its own
-# group, since both variants share the same trailing date/time.
-BACKUP_FILENAME_RE = re.compile(r"^balancer_(?:prerestore_)?(\d{8})_(\d{6})\.db$")
+# group, since both variants share the same trailing date/time. Listing,
+# pruning, and restore accept only names matching this exactly, so other files
+# in a shared backup folder are never shown or deleted. ASCII digits only, and
+# \Z rather than $ so a trailing newline can't slip through.
+BACKUP_FILENAME_RE = re.compile(r"^balancer_(?:prerestore_)?([0-9]{8})_([0-9]{6})\.db\Z")
 
 SEED_CATEGORIES = [
     "Auto", "Charity", "Dining", "Entertainment", "Fees", "Gas", "Gifts",
@@ -1736,7 +1739,7 @@ class Api:
                 names = []
             items = []
             for name in names:
-                if not (name.startswith("balancer_") and name.endswith(".db")):
+                if not BACKUP_FILENAME_RE.match(name):
                     continue
                 full_path = os.path.join(backups_dir, name)
                 items.append({
@@ -1929,18 +1932,17 @@ def _clamp_backup_keep(value) -> int:
 
 
 def _list_backup_files(backups_dir: str, prerestore: bool) -> list:
-    """Filenames sorted oldest first. Regular backups exclude prerestore
-    ones even though both start with 'balancer_', since the fixed-width
-    timestamp suffix makes lexical order match chronological order either way."""
+    """Exact backup filenames (BACKUP_FILENAME_RE) sorted oldest first, so
+    pruning never touches look-alike files. Regular backups exclude prerestore
+    ones; the fixed-width timestamp makes lexical order match chronological
+    order within each pool."""
     try:
         names = os.listdir(backups_dir)
     except Exception:
         return []
-    if prerestore:
-        return sorted(n for n in names if n.startswith("balancer_prerestore_") and n.endswith(".db"))
     return sorted(
         n for n in names
-        if n.startswith("balancer_") and n.endswith(".db") and not n.startswith("balancer_prerestore_")
+        if BACKUP_FILENAME_RE.match(n) and n.startswith("balancer_prerestore_") == prerestore
     )
 
 

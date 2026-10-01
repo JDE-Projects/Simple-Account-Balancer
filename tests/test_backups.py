@@ -119,6 +119,69 @@ def test_prune_prerestore_backups_keeps_default_count(tmp_path):
     assert remaining == names[-PRERESTORE_KEEP:]
 
 
+# --- exact-name matching: look-alike files are never listed or pruned ------------
+
+# Files a shared backup folder might hold that share the balancer_*.db shape
+# but are not this app's backups.
+LOOK_ALIKES = [
+    "balancer_old.db",
+    "balancer_.db",
+    "balancer_main.db",
+    "balancer_x_20240101_000000.db",
+    "balancer_2024010_000000.db",           # 7-digit date
+    "balancer_20240101_0000000.db",         # 7-digit time
+    "balancer_20240101000000.db",           # no separator
+    "balancer_20240101_000000.db.bak",
+    "balancer_20230101_000000.DB",          # dates unused elsewhere: Windows
+    "Balancer_20230102_000000.db",          # names are case-insensitive
+    "balancer_prerestore_old.db",
+    "balancer_prerestore_x_20240101_000000.db",
+    "balancer_٢٠٢٤٠١٠١_000000.db",  # non-ASCII digits
+]
+
+
+def test_backup_filename_re_rejects_trailing_newline():
+    assert not sab.BACKUP_FILENAME_RE.match("balancer_20240101_000000.db\n")
+
+
+def test_list_backup_files_ignores_look_alikes(tmp_path):
+    _touch(tmp_path, "balancer_20240101_000000.db")
+    _touch(tmp_path, "balancer_prerestore_20240102_000000.db")
+    for n in LOOK_ALIKES:
+        _touch(tmp_path, n)
+    assert _list_backup_files(str(tmp_path), prerestore=False) == ["balancer_20240101_000000.db"]
+    assert _list_backup_files(str(tmp_path), prerestore=True) == ["balancer_prerestore_20240102_000000.db"]
+
+
+def test_prune_backups_never_deletes_look_alikes(tmp_path):
+    # The look-alikes would sort before every real backup, so a loose match
+    # would prune them first.
+    for n in LOOK_ALIKES:
+        _touch(tmp_path, n)
+    names = [f"balancer_2024010{i}_000000.db" for i in range(1, 8)]
+    for n in names:
+        _touch(tmp_path, n)
+    _prune_backups(str(tmp_path), keep=5)
+    _prune_prerestore_backups(str(tmp_path), keep=1)
+    left = set(os.listdir(tmp_path))
+    assert set(LOOK_ALIKES) <= left
+    assert _list_backup_files(str(tmp_path), prerestore=False) == names[2:]
+
+
+def test_list_backups_shows_only_exact_names(tmp_path, monkeypatch):
+    monkeypatch.setattr(sab, "effective_backup_dir", lambda: (str(tmp_path), False))
+    _touch(tmp_path, "balancer_20240101_000000.db")
+    _touch(tmp_path, "balancer_prerestore_20240102_000000.db")
+    for n in LOOK_ALIKES:
+        _touch(tmp_path, n)
+    result = sab.Api().list_backups()
+    assert result["ok"] is True
+    assert [b["filename"] for b in result["backups"]] == [
+        "balancer_prerestore_20240102_000000.db",
+        "balancer_20240101_000000.db",
+    ]
+
+
 # --- _run_backup_with_fallback -------------------------------------------------
 
 def test_run_backup_with_fallback_reports_failure_when_source_missing(tmp_path, monkeypatch):
