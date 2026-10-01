@@ -137,6 +137,10 @@ LOOK_ALIKES = [
     "balancer_prerestore_old.db",
     "balancer_prerestore_x_20240101_000000.db",
     "balancer_٢٠٢٤٠١٠١_000000.db",  # non-ASCII digits
+    # Script-shaped names the restore list once pasted into an onclick.
+    "balancer_');api().export_csv(1);('.db",
+    "balancer_20240101_000000');alert(1);('.db",
+    "balancer_prerestore_20240101_000000');alert(1);('.db",
 ]
 
 

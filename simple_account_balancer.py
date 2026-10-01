@@ -1821,9 +1821,13 @@ class Api:
 
     # --- misc bridge helpers --------------------------------------------------
     def open_url(self, url: str):
-        """Open a link in the system browser, never by navigating the app window."""
+        """Open a link in the system browser, never by navigating the app window.
+        Only the JDE-Projects website is allowed (see _is_allowed_url)."""
         import webbrowser
 
+        if not _is_allowed_url(url):
+            self.log("open_url refused an address outside the allowed site")
+            return {"ok": False, "error": "That link isn't allowed."}
         webbrowser.open(url)
         return {"ok": True}
 
@@ -1929,6 +1933,22 @@ def _clamp_backup_keep(value) -> int:
     except (TypeError, ValueError):
         return BACKUP_KEEP
     return max(BACKUP_KEEP_MIN, min(BACKUP_KEEP_MAX, n))
+
+
+ALLOWED_URL_HOST = "jde-projects.com"
+
+
+def _is_allowed_url(url) -> bool:
+    """True only for a plain https address on the JDE-Projects website: no
+    other host, scheme, port, login part, or whitespace/control characters."""
+    if not isinstance(url, str) or any(c.isspace() or ord(c) < 32 for c in url):
+        return False
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return False
+    # Comparing the whole netloc rules out ports and user@host tricks.
+    return parts.scheme == "https" and parts.netloc == ALLOWED_URL_HOST
 
 
 def _list_backup_files(backups_dir: str, prerestore: bool) -> list:

@@ -7,6 +7,11 @@
     "smoke": {
       "script": "tools/ui_check/smoke.js",
       "timeout_s": 120
+    },
+    "restore": {
+      "script": "tools/ui_check/restore.js",
+      "fixture": "tools/ui_check/fixture_restore.py",
+      "timeout_s": 120
     }
   }
 }
