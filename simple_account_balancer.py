@@ -398,8 +398,9 @@ def open_db(path: str) -> sqlite3.Connection:
             )
 
         # Check before creating so we only seed categories the first time this
-        # table shows up (fresh db or an upgraded Phase 3 db); later runs must
-        # never re-add categories the user deliberately deleted.
+        # table shows up (a fresh database, or one upgraded from a version
+        # without categories); later runs must never re-add categories the
+        # user deliberately deleted.
         existing = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='categories'"
         ).fetchone()
@@ -1027,11 +1028,18 @@ class Api:
             cur = self._conn.cursor()
             rows = cur.execute(
                 "SELECT c.id, c.name, "
-                "(SELECT COUNT(*) FROM transactions t WHERE t.category = c.name COLLATE NOCASE) AS used_count "
+                "(SELECT COUNT(*) FROM transactions t WHERE t.category = c.name COLLATE NOCASE) AS used_count, "
+                "(SELECT COUNT(*) FROM autopays a WHERE a.category = c.name COLLATE NOCASE) AS autopay_count "
                 "FROM categories c ORDER BY c.name COLLATE NOCASE"
             ).fetchall()
             categories = [
-                {"id": r["id"], "name": r["name"], "used_count": r["used_count"]} for r in rows
+                {
+                    "id": r["id"],
+                    "name": r["name"],
+                    "used_count": r["used_count"],
+                    "autopay_count": r["autopay_count"],
+                }
+                for r in rows
             ]
             return {"ok": True, "categories": categories}
         except Exception as e:
@@ -1055,9 +1063,9 @@ class Api:
 
     @_database_call
     def rename_category(self, category_id, new_name):
-        """Rename a category and carry the change over to past transactions.
+        """Rename a category and carry the change over to past transactions and autopays.
         If the new name collides with another existing category, the two are
-        merged: transactions move to the existing category and this row goes away."""
+        merged: transactions and autopays move to the existing category and this row goes away."""
         try:
             cur = self._conn.cursor()
             row = cur.execute("SELECT id, name FROM categories WHERE id=?", (category_id,)).fetchone()
@@ -1076,6 +1084,10 @@ class Api:
                     "UPDATE transactions SET category=? WHERE category=? COLLATE NOCASE",
                     (merge_target["name"], old_name),
                 )
+                cur.execute(
+                    "UPDATE autopays SET category=? WHERE category=? COLLATE NOCASE",
+                    (merge_target["name"], old_name),
+                )
                 cur.execute("DELETE FROM categories WHERE id=?", (category_id,))
                 self._conn.commit()
                 self.log(f"Category {category_id} merged into category {merge_target['id']}")
@@ -1083,6 +1095,10 @@ class Api:
             cur.execute("UPDATE categories SET name=? WHERE id=?", (new_name_s, category_id))
             cur.execute(
                 "UPDATE transactions SET category=? WHERE category=? COLLATE NOCASE",
+                (new_name_s, old_name),
+            )
+            cur.execute(
+                "UPDATE autopays SET category=? WHERE category=? COLLATE NOCASE",
                 (new_name_s, old_name),
             )
             self._conn.commit()
@@ -1094,8 +1110,9 @@ class Api:
 
     @_database_call
     def delete_category(self, category_id, reassign_to=None):
-        """Delete a category. Past transactions keep the old label unless
-        reassign_to names another category to move them to."""
+        """Delete a category. With reassign_to, transactions and autopays move
+        to that category. Otherwise past transactions keep the label and
+        autopays become uncategorized."""
         try:
             cur = self._conn.cursor()
             row = cur.execute("SELECT id, name FROM categories WHERE id=?", (category_id,)).fetchone()
@@ -1107,6 +1124,15 @@ class Api:
                 cur.execute(
                     "UPDATE transactions SET category=? WHERE category=? COLLATE NOCASE",
                     (reassign_s, old_name),
+                )
+                cur.execute(
+                    "UPDATE autopays SET category=? WHERE category=? COLLATE NOCASE",
+                    (reassign_s, old_name),
+                )
+            else:
+                cur.execute(
+                    "UPDATE autopays SET category='' WHERE category=? COLLATE NOCASE",
+                    (old_name,),
                 )
             cur.execute("DELETE FROM categories WHERE id=?", (category_id,))
             self._conn.commit()

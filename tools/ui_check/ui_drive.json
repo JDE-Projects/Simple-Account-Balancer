@@ -28,6 +28,11 @@
       "fixture": "tools/ui_check/fixture_autopay_fail.py",
       "timeout_s": 120
     },
+    "categories": {
+      "script": "tools/ui_check/categories.js",
+      "fixture": "tools/ui_check/fixture_categories.py",
+      "timeout_s": 120
+    },
     "prune-errors": {
       "script": "tools/ui_check/prune_errors.js",
       "fixture": "tools/ui_check/fixture_prune_errors.py",
