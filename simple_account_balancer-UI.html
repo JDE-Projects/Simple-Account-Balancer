@@ -1119,7 +1119,7 @@ table.register tr.compare-flash { animation:compareFlash 1.2s ease; }
 
   <div class="bottom-bar">
     <div class="bar-left">
-      <label class="dbg-toggle" title="Write a timestamped debug log next to the app. It records actions and errors only, never payees, amounts, or balances.">
+      <label class="dbg-toggle" title="Write a timestamped debug log next to the app. It records actions, errors, dates, and counts, never payees, amounts, balances, names, or file paths.">
         <input type="checkbox" id="dbgToggle" onchange="onDebugToggle(this.checked)" />
         <span class="dbg-track"></span>
         <span class="dbg-label">Debug log</span>
@@ -3015,7 +3015,17 @@ async function confirmDeleteAutopay(){
 
 /* ---------- misc bridge helpers ---------- */
 function openUrl(u){ if (api()) api().open_url(u); }
-async function onDebugToggle(on){ if (api()) await api().set_debug(on); }
+async function onDebugToggle(on){
+  if (!api()) return;
+  const r = await api().set_debug(on);
+  if (r) $("dbgToggle").checked = !!r.enabled;
+}
+/* Called from Python when the debug log can't write or can't delete an old
+   log. A failed write turns logging off, so the toggle follows the real state. */
+window.onDebugLogWarning = function(text, enabled){
+  showErrorNotice(text);
+  $("dbgToggle").checked = !!enabled;
+};
 
 /* ---------- error notice (bottom bar, dismissible for the session) ----------
    Hides the backup/autopay notices whenever it appears: bar-center doesn't
