@@ -514,43 +514,49 @@ table.register tr.compare-flash { animation:compareFlash 1.2s ease; }
 .icon-btn:disabled:hover { color:var(--text-faint); background:transparent; }
 
 /* ---- bottom bar ---- */
+/* equal side columns keep the update notice on the window's true center,
+   however wide the version and button on the right are */
 .bottom-bar {
   flex:0 0 auto; height:44px;
   background:var(--bg-2); border-top:1px solid var(--border);
-  display:flex; align-items:center; justify-content:space-between; padding:0 18px;
+  display:grid; grid-template-columns:1fr minmax(0, auto) 1fr;
+  align-items:center; gap:10px; padding:0 18px;
 }
-.bottom-bar .bar-left, .bottom-bar .bar-right { display:flex; align-items:center; gap:10px; flex:none; }
-.bottom-bar .bar-center { flex:1; display:flex; align-items:center; justify-content:center; gap:14px; }
+.bottom-bar .bar-left, .bottom-bar .bar-right { display:flex; align-items:center; gap:10px; }
+.bottom-bar .bar-right { justify-content:flex-end; }
+.bottom-bar .bar-center { display:flex; align-items:center; justify-content:center; min-width:0; }
 
-.error-notice { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:var(--red); }
-.error-notice .notice-dismiss {
-  width:16px; height:16px; border:none; background:transparent; color:var(--red);
+/* ---- top notice banners ---- */
+.notice-banner {
+  display:flex; flex-direction:column; gap:8px; width:100%; box-sizing:border-box;
+  padding:0 18px;
+}
+/* space below the banner only while a notice is showing */
+.notice-banner:has(> span:not([style*="none"])) { margin-bottom:12px; }
+.error-notice, .backup-notice, .autopay-notice {
+  align-items:flex-start; gap:10px; width:100%; box-sizing:border-box;
+  padding:9px 10px; border:1px solid currentColor; border-radius:var(--radius-sm);
+  font-size:12px; line-height:1.4;
+}
+.error-notice, .backup-notice {
+  color:var(--red); background:color-mix(in srgb, var(--red) 10%, transparent);
+}
+.autopay-notice {
+  color:var(--accent); background:color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.autopay-notice.is-error {
+  color:var(--red); background:color-mix(in srgb, var(--red) 10%, transparent);
+}
+.error-notice > span, .backup-notice > span, .autopay-notice > span {
+  flex:1; min-width:0; overflow-wrap:anywhere;
+}
+.notice-dismiss {
+  width:18px; height:18px; flex:0 0 18px; border:none; background:transparent; color:currentColor;
   cursor:pointer; border-radius:4px; display:flex; align-items:center; justify-content:center;
   opacity:.75; transition:.15s; padding:0;
 }
-.error-notice .notice-dismiss:hover { opacity:1; background:color-mix(in srgb, var(--red) 15%, transparent); }
-.error-notice .notice-dismiss svg { width:11px; height:11px; }
-
-.backup-notice { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:var(--amber); }
-.backup-notice .notice-dismiss {
-  width:16px; height:16px; border:none; background:transparent; color:var(--amber);
-  cursor:pointer; border-radius:4px; display:flex; align-items:center; justify-content:center;
-  opacity:.75; transition:.15s; padding:0;
-}
-.backup-notice .notice-dismiss:hover { opacity:1; background:color-mix(in srgb, var(--amber) 15%, transparent); }
-.backup-notice .notice-dismiss svg { width:11px; height:11px; }
-
-.autopay-notice { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:var(--accent); }
-.autopay-notice .notice-dismiss {
-  width:16px; height:16px; border:none; background:transparent; color:var(--accent);
-  cursor:pointer; border-radius:4px; display:flex; align-items:center; justify-content:center;
-  opacity:.75; transition:.15s; padding:0;
-}
-.autopay-notice .notice-dismiss:hover { opacity:1; background:color-mix(in srgb, var(--accent) 15%, transparent); }
-.autopay-notice .notice-dismiss svg { width:11px; height:11px; }
-.autopay-notice.is-error,
-.autopay-notice.is-error .notice-dismiss { color:var(--red); }
-.autopay-notice.is-error .notice-dismiss:hover { background:color-mix(in srgb, var(--red) 15%, transparent); }
+.notice-dismiss:hover { opacity:1; background:color-mix(in srgb, currentColor 15%, transparent); }
+.notice-dismiss svg { width:11px; height:11px; }
 
 /* Lives in the toolbar's center dead-space: the toolbar is space-between, so
    showing/hiding this never shifts the range control or the right-hand buttons,
@@ -659,6 +665,27 @@ table.register tr.compare-flash { animation:compareFlash 1.2s ease; }
       </button>
     </div>
   </header>
+
+  <div class="notice-banner">
+    <span id="errorNotice" class="error-notice" style="display:none;">
+      <span id="errorNoticeText"></span>
+      <button type="button" class="notice-dismiss" onclick="dismissErrorNotice()" title="Dismiss">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
+      </button>
+    </span>
+    <span id="backupNotice" class="backup-notice" style="display:none;">
+      <span id="backupNoticeText"></span>
+      <button type="button" class="notice-dismiss" onclick="dismissBackupNotice()" title="Dismiss">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
+      </button>
+    </span>
+    <span id="autopayNotice" class="autopay-notice" style="display:none;">
+      <span id="autopayNoticeText"></span>
+      <button type="button" class="notice-dismiss" onclick="dismissAutopayNotice()" title="Dismiss">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
+      </button>
+    </span>
+  </div>
 
   <div class="acct-menu" id="acctMenu"></div>
 
@@ -1126,24 +1153,6 @@ table.register tr.compare-flash { animation:compareFlash 1.2s ease; }
       </label>
     </div>
     <div class="bar-center">
-      <span id="errorNotice" class="error-notice" style="display:none;">
-        <span id="errorNoticeText"></span>
-        <button type="button" class="notice-dismiss" onclick="dismissErrorNotice()" title="Dismiss">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
-        </button>
-      </span>
-      <span id="backupNotice" class="backup-notice" style="display:none;">
-        <span id="backupNoticeText"></span>
-        <button type="button" class="notice-dismiss" onclick="dismissBackupNotice()" title="Dismiss">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
-        </button>
-      </span>
-      <span id="autopayNotice" class="autopay-notice" style="display:none;">
-        <span id="autopayNoticeText"></span>
-        <button type="button" class="notice-dismiss" onclick="dismissAutopayNotice()" title="Dismiss">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
-        </button>
-      </span>
       <span id="updateNotice"></span>
     </div>
     <div class="bar-right">
@@ -3027,14 +3036,8 @@ window.onDebugLogWarning = function(text, enabled){
   $("dbgToggle").checked = !!enabled;
 };
 
-/* ---------- error notice (bottom bar, dismissible for the session) ----------
-   Hides the backup/autopay notices whenever it appears: bar-center doesn't
-   wrap and the window's 680px minimum width means several notices up at
-   once would squeeze each other out, so the error is the one that must not
-   get squeezed out. */
+/* ---------- error notice (top banner, dismissible for the session) ---------- */
 function showErrorNotice(text){
-  dismissBackupNotice();
-  dismissAutopayNotice();
   $("errorNoticeText").textContent = text;
   $("errorNotice").style.display = "inline-flex";
 }
@@ -3042,7 +3045,7 @@ function dismissErrorNotice(){
   $("errorNotice").style.display = "none";
 }
 
-/* ---------- backup notice (bottom bar, dismissible for the session) ---------- */
+/* ---------- backup notice (top banner, dismissible for the session) ---------- */
 function showBackupNotice(text){
   $("backupNoticeText").textContent = text;
   $("backupNotice").style.display = "inline-flex";
@@ -3051,7 +3054,7 @@ function dismissBackupNotice(){
   $("backupNotice").style.display = "none";
 }
 
-/* ---------- autopay launch notice (bottom bar, dismissible for the session) ---------- */
+/* ---------- autopay launch notice (top banner, dismissible for the session) ---------- */
 function showAutopayNotice(text, isError){
   $("autopayNoticeText").textContent = text;
   $("autopayNotice").classList.toggle("is-error", !!isError);

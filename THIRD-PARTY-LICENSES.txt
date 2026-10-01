@@ -13,6 +13,7 @@ qtpy             MIT            https://github.com/spyder-ide/qtpy
 truststore       MIT            https://github.com/sethmlarson/truststore
 Sora (font)      OFL-1.1        https://github.com/sora-xor/sora-font
 JetBrains Mono   OFL-1.1        https://github.com/JetBrains/JetBrainsMono
+  Full OFL-1.1 text for both fonts: fonts/OFL.txt
 
 # Per-app components
 This tool uses only the Python standard library beyond the always-bundled

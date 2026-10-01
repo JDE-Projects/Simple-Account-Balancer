@@ -1,6 +1,6 @@
 // ui_drive prune-errors scenario for Simple Account Balancer. The fixture
 // holds old backups open so the app's own pruning fails. Checks that a failed
-// launch prune shows in the bottom-bar notice, and that a failed prune during
+// launch prune shows in the top-banner notice, and that a failed prune during
 // a restore shows there too, after the restore itself succeeds.
 //
 // Does not cover the closing backup's message box: a native Windows dialog
@@ -17,7 +17,7 @@ export default async function pruneErrors(helpers) {
   const launchShown = await waitFor("document.getElementById('backupNotice').style.display !== 'none'", 10000)
     .then(() => true).catch(() => false);
   const launchText = await evaluate("document.getElementById('backupNoticeText').textContent");
-  check("a failed launch prune shows in the bottom bar", launchShown && /Couldn.t delete 1 old backup./.test(launchText),
+  check("a failed launch prune shows in the top banner", launchShown && /Couldn.t delete 1 old backup./.test(launchText),
     launchText);
   await screenshot("launch-prune-notice");
   await click("#backupNotice .notice-dismiss");
@@ -35,7 +35,7 @@ export default async function pruneErrors(helpers) {
   const restoreShown = await waitFor("document.getElementById('backupNotice').style.display !== 'none'", 10000)
     .then(() => true).catch(() => false);
   const restoreText = await evaluate("document.getElementById('backupNoticeText').textContent");
-  check("a failed prune during restore shows in the bottom bar", restoreShown && /Couldn.t delete 1 old backup./.test(restoreText),
+  check("a failed prune during restore shows in the top banner", restoreShown && /Couldn.t delete 1 old backup./.test(restoreText),
     restoreText);
   const errText = await evaluate("document.getElementById('restore-confirm-err').textContent");
   check("the restore itself succeeded", errText === "" && await evaluate("document.getElementById('amScreenRestoreConfirm').offsetParent === null"),

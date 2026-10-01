@@ -1,6 +1,6 @@
 // ui_drive autopay-fail scenario for Simple Account Balancer. The fixture
 // plants a due autopay and a trigger that refuses every new transaction.
-// Checks that the failed launch posting shows as a red bottom-bar notice with
+// Checks that the failed launch posting shows as a red top-banner notice with
 // nothing posted, then that saving a due autopay from the form keeps the
 // rule and shows the "saved, but" notice in red.
 
@@ -18,7 +18,7 @@ export default async function autopayFail(helpers) {
   const shown = await waitFor("document.getElementById('autopayNotice').style.display !== 'none'", 10000)
     .then(() => true).catch(() => false);
   const text = await evaluate("document.getElementById('autopayNoticeText').textContent");
-  check("a failed launch posting shows in the bottom bar",
+  check("a failed launch posting shows in the top banner",
     shown && /^Autopays couldn.t be added to the register today\./.test(text), text);
   check("the launch notice is shown as an error",
     await evaluate("document.getElementById('autopayNotice').classList.contains('is-error')") === true);
