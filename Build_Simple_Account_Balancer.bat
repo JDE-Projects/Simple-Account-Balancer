@@ -69,6 +69,12 @@ if errorlevel 1 (
     %PAUSE%
     exit /b 1
 )
+"%VPY%" tools\trim_bundle.py "dist\Simple Account Balancer"
+if errorlevel 1 (
+    echo ERROR: Failed to remove approved Qt components from the app bundle.
+    %PAUSE%
+    exit /b 1
+)
 echo.
 echo =====================================================
 echo  Done. Your app folder is in:
