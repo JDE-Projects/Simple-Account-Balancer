@@ -5,7 +5,7 @@ on:
     tags: ['v*']
 jobs:
   release:
-    uses: JDE-Projects/Build-Tools/.github/workflows/release.yml@5ecb1d806d02d7dbf6af2b53c932b7e7cb64a7ed # Build-Tools main (CI checks: ruff, import, pytest)
+    uses: JDE-Projects/Build-Tools/.github/workflows/release.yml@04125a839db7cfb73c74262547b6c72e714c3b86 # Build-Tools main (CI checks: ruff, import, pytest, runtime lock check; draft-then-publish)
     permissions:
       id-token: write
       attestations: write
@@ -17,3 +17,4 @@ jobs:
       build_command: "Build_Simple_Account_Balancer.bat"
       app_id: "ecf669e1-0749-43af-86c3-f74c48bc21f3"
       entry_script: "simple_account_balancer.py"
+      verify_runtime_lock: true
