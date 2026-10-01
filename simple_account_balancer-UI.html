@@ -2466,16 +2466,27 @@ function buildRestoreConfirmHtml(preview){
       return `${name}: this account will come back (${a.count} ${txWord}).`;
     }
     const parts = [];
-    if (a.added_or_changed > 0){
-      const w = a.added_or_changed === 1 ? "transaction" : "transactions";
-      parts.push(`${a.added_or_changed} ${w} added or changed since this backup will be lost.`);
+    const txCount = n => `${n} ${n === 1 ? "transaction" : "transactions"}`;
+    if (a.added > 0){
+      parts.push(`${txCount(a.added)} added since this backup will be removed.`);
+    }
+    if (a.changed > 0){
+      parts.push(`${txCount(a.changed)} edited or reordered since this backup will change back.`);
     }
     if (a.deleted > 0){
-      const w = a.deleted === 1 ? "transaction" : "transactions";
-      parts.push(`${a.deleted} ${w} deleted since this backup will come back.`);
+      parts.push(`${txCount(a.deleted)} deleted since this backup will come back.`);
+    }
+    if (a.details_changed){
+      parts.push("The account name, starting balance, or start date will change back.");
     }
     return `${name}: ${parts.join(" ")}`;
   });
+  lines.push(preview.categories === "same"
+    ? "<strong>Categories</strong>: no differences."
+    : "<strong>Categories</strong>: will change back to the backup's list.");
+  lines.push(preview.autopays === "same"
+    ? "<strong>Autopays</strong>: no differences."
+    : "<strong>Autopays</strong>: will change back to the backup's version.");
   return `<strong>Restore the backup from ${esc(dateStr)}?</strong>` +
     `<span class="m-detail">Compared to your current register:<br>${lines.join("<br>")}</span>` +
     `<span class="m-detail">Your current register will be backed up first, so this can be undone.</span>`;
@@ -2488,7 +2499,7 @@ async function confirmRestore(){
   if (!RESTORE.pendingFilename || !api()) return;
   const errEl = $("restore-confirm-err");
   errEl.textContent = "";
-  const r = await api().restore_backup(RESTORE.pendingFilename);
+  const r = await api().restore_backup(RESTORE.pendingFilename, RESTORE.preview && RESTORE.preview.fingerprint);
   if (!r || !r.ok){
     errEl.textContent = (r && r.error) || "Couldn't restore that backup.";
     return;

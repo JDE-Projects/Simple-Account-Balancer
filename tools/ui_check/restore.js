@@ -52,6 +52,13 @@ export default async function restore(helpers) {
   check("clicking a real backup opens its preview", previewShown);
   const pending = await evaluate("RESTORE.pendingFilename");
   check("the preview is for the clicked backup", pending === fixture.real[0], String(pending));
+  const previewText = await evaluate("document.getElementById('restore-confirm-msg').textContent");
+  check("the preview counts the transaction added since the backup",
+    previewText.includes("1 transaction added since this backup will be removed."), previewText);
+  check("the preview reports categories and autopays",
+    previewText.includes("Categories: no differences.") && previewText.includes("Autopays: no differences."), previewText);
+  const fingerprint = await evaluate("RESTORE.preview.fingerprint");
+  check("the preview carries the backup's fingerprint", /^[0-9a-f]{64}$/.test(fingerprint || ""), String(fingerprint));
   await screenshot("restore-preview");
   await click("button[onclick='cancelRestoreConfirm()']");
   const backToList = await waitFor("document.getElementById('amScreenRestoreList').style.display === 'block'", 5000)

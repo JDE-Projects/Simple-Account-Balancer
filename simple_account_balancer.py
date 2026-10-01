@@ -18,6 +18,7 @@ import ctypes
 import ctypes.wintypes as wintypes
 import datetime
 import errno
+import hashlib
 import itertools
 import json
 import os
@@ -63,6 +64,9 @@ MIN_WINDOW_H = 650
 # \Z rather than $ so a trailing newline can't slip through.
 BACKUP_FILENAME_RE = re.compile(
     r"^balancer_(?:prerestore_)?([0-9]{8})_([0-9]{6})(?:_([0-9]{6}))?\.db\Z"
+)
+RESTORE_TEMP_FILENAME_RE = re.compile(
+    r"^\.balancer_restore_(?:stage|rollback)_[A-Za-z0-9_]+\.db(?:-journal)?\Z"
 )
 
 SEED_CATEGORIES = [
@@ -558,6 +562,40 @@ def _remove_db_artifacts(path: str) -> list:
         except Exception as e:
             failures.append(f"{candidate}: {e}")
     return failures
+
+
+def _remove_stale_restore_files(db_dir: str) -> tuple:
+    """Remove restore staging files left by an interrupted earlier run.
+    Returns (how many were removed, names that couldn't be deleted)."""
+    removed = 0
+    failures = []
+    try:
+        names = os.listdir(db_dir)
+    except Exception as e:
+        return 0, [f"{db_dir}: {e}"]
+    for name in names:
+        if not RESTORE_TEMP_FILENAME_RE.fullmatch(name):
+            continue
+        path = os.path.join(db_dir, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            os.remove(path)
+            removed += 1
+        except FileNotFoundError:
+            pass
+        except Exception:
+            failures.append(name)
+    return removed, failures
+
+
+def _file_sha256(path: str) -> str:
+    """Return the SHA-256 digest of a file without loading it into memory."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _stage_backup(full_path: str, db_dir: str) -> tuple:
@@ -1866,50 +1904,93 @@ class Api:
     def _diff_against_live(self, backup_conn):
         """Per-account comparison of a backup against the live database.
         Accounts are matched by id (both tables are AUTOINCREMENT, so ids
-        are never reused); transactions are compared by full row content."""
-        live_accounts = {r["id"]: r["name"] for r in self._conn.execute("SELECT id, name FROM accounts")}
-        backup_accounts = {r["id"]: r["name"] for r in backup_conn.execute("SELECT id, name FROM accounts")}
+        are never reused); transactions are matched by id and their editable
+        contents are compared without treating an edit as a deletion."""
+        account_columns = (
+            "id, name, starting_balance_cents, starting_date, "
+            "starting_balance_prev_cents, starting_balance_changed_at"
+        )
+        live_accounts = {
+            row["id"]: row for row in self._conn.execute(f"SELECT {account_columns} FROM accounts")
+        }
+        backup_accounts = {
+            row["id"]: row for row in backup_conn.execute(f"SELECT {account_columns} FROM accounts")
+        }
 
-        def tx_set(conn, account_id):
+        def transactions_by_id(conn, account_id):
             rows = conn.execute(
-                "SELECT id, date, payee, category, notes, amount_cents, cleared "
+                "SELECT id, date, payee, category, notes, amount_cents, cleared, estimated, sort_key "
                 "FROM transactions WHERE account_id=?",
                 (account_id,),
             ).fetchall()
             return {
-                (r["id"], r["date"], r["payee"], r["category"], r["notes"], r["amount_cents"], bool(r["cleared"]))
-                for r in rows
+                row["id"]: (
+                    row["date"], row["payee"], row["category"], row["notes"],
+                    row["amount_cents"], row["cleared"], row["estimated"], row["sort_key"],
+                ) for row in rows
             }
 
         results = []
         for account_id in set(live_accounts) | set(backup_accounts):
             in_live = account_id in live_accounts
             in_backup = account_id in backup_accounts
-            name = live_accounts.get(account_id, backup_accounts.get(account_id))
+            name = (live_accounts.get(account_id) or backup_accounts[account_id])["name"]
             if in_live and not in_backup:
                 results.append({
                     "id": account_id, "name": name, "kind": "only_live",
-                    "count": len(tx_set(self._conn, account_id)),
+                    "count": len(transactions_by_id(self._conn, account_id)),
                 })
             elif in_backup and not in_live:
                 results.append({
                     "id": account_id, "name": name, "kind": "only_backup",
-                    "count": len(tx_set(backup_conn, account_id)),
+                    "count": len(transactions_by_id(backup_conn, account_id)),
                 })
             else:
-                live_set = tx_set(self._conn, account_id)
-                backup_set = tx_set(backup_conn, account_id)
-                added_or_changed = len(live_set - backup_set)
-                deleted = len(backup_set - live_set)
-                if added_or_changed == 0 and deleted == 0:
+                live_transactions = transactions_by_id(self._conn, account_id)
+                backup_transactions = transactions_by_id(backup_conn, account_id)
+                added = len(live_transactions.keys() - backup_transactions.keys())
+                deleted = len(backup_transactions.keys() - live_transactions.keys())
+                changed = sum(
+                    live_transactions[transaction_id] != backup_transactions[transaction_id]
+                    for transaction_id in live_transactions.keys() & backup_transactions.keys()
+                )
+                details_changed = any(
+                    live_accounts[account_id][column] != backup_accounts[account_id][column]
+                    for column in (
+                        "name", "starting_balance_cents", "starting_date",
+                        "starting_balance_prev_cents", "starting_balance_changed_at",
+                    )
+                )
+                if added == 0 and changed == 0 and deleted == 0 and not details_changed:
                     results.append({"id": account_id, "name": name, "kind": "same"})
                 else:
                     results.append({
                         "id": account_id, "name": name, "kind": "diff",
-                        "added_or_changed": added_or_changed, "deleted": deleted,
+                        "added": added, "changed": changed, "deleted": deleted,
+                        "details_changed": details_changed,
                     })
         results.sort(key=lambda r: (r["name"] or "").casefold())
         return results
+
+    def _categories_match_live(self, backup_conn):
+        live_names = sorted(row["name"] for row in self._conn.execute("SELECT name FROM categories"))
+        backup_names = sorted(row["name"] for row in backup_conn.execute("SELECT name FROM categories"))
+        return live_names == backup_names
+
+    def _autopays_match_live(self, backup_conn):
+        columns = (
+            "id, account_id, payee, category, notes, amount_cents, next_pay_date, "
+            "next_post_date, pay_day, post_day, is_variable"
+        )
+        live_rows = {
+            row["id"]: tuple(row[column] for column in row.keys() if column != "id")
+            for row in self._conn.execute(f"SELECT {columns} FROM autopays")
+        }
+        backup_rows = {
+            row["id"]: tuple(row[column] for column in row.keys() if column != "id")
+            for row in backup_conn.execute(f"SELECT {columns} FROM autopays")
+        }
+        return live_rows == backup_rows
 
     def list_backups(self):
         """List backups in the effective backup folder, newest first."""
@@ -1943,26 +2024,44 @@ class Api:
             full_path, err = self._validate_backup_filename(filename)
             if err:
                 return {"ok": False, "error": err}
-            backup_conn, err = self._open_backup_readonly(full_path)
+            db_dir = os.path.dirname(os.path.abspath(self._db_path))
+            staged_path, err, detail = _stage_backup(full_path, db_dir)
             if err:
+                self.log(f"preview_restore staging failed: {detail}")
                 return {"ok": False, "error": err}
             try:
-                accounts_diff = self._diff_against_live(backup_conn)
+                backup_conn = _readonly_connection(staged_path)
+                try:
+                    accounts_diff = self._diff_against_live(backup_conn)
+                    categories = "same" if self._categories_match_live(backup_conn) else "differ"
+                    autopays = "same" if self._autopays_match_live(backup_conn) else "differ"
+                finally:
+                    backup_conn.close()
             finally:
-                backup_conn.close()
+                cleanup_failures = _remove_db_artifacts(staged_path)
+                if cleanup_failures:
+                    self.log("preview_restore couldn't clean up its staged backup")
             timestamp = _parse_backup_timestamp(os.path.basename(full_path), full_path)
-            return {"ok": True, "timestamp": timestamp, "accounts": accounts_diff}
+            return {
+                "ok": True, "timestamp": timestamp, "accounts": accounts_diff,
+                "categories": categories, "autopays": autopays,
+                "fingerprint": _file_sha256(full_path),
+            }
         except Exception as e:
             self.log(f"preview_restore failed: {e}")
             return {"ok": False, "error": "Couldn't read that backup file."}
 
-    def restore_backup(self, filename):
+    def restore_backup(self, filename, fingerprint=None):
         """Restore the live database from a backup file. Takes a pre-restore
         safety backup of the current live data first, so this can be undone."""
         try:
             full_path, err = self._validate_backup_filename(filename)
             if err:
                 return {"ok": False, "error": err}
+            if fingerprint is not None and _file_sha256(full_path) != fingerprint:
+                message = "That backup file changed since you previewed it. Open it again to see what it would change."
+                self.log("restore_backup refused because the backup changed since preview")
+                return {"ok": False, "error": message}
             db_path = self._db_path
             backups_dir, _ = effective_backup_dir()
             db_dir = os.path.dirname(os.path.abspath(db_path))
@@ -2494,10 +2593,19 @@ def main():
         sys.exit(1)
 
     db_path = os.path.join(folder, DB_FILENAME)
-    db_existed_before = os.path.exists(db_path)
-
     api = Api()
     api.set_db_path(db_path)
+    removed_restore_count, stale_restore_failures = _remove_stale_restore_files(folder)
+    if removed_restore_count:
+        api.log(f"Launch cleanup removed {removed_restore_count} stale restore file(s) in {folder}")
+    if stale_restore_failures:
+        api.log(
+            f"Launch cleanup couldn't delete {len(stale_restore_failures)} stale restore file(s): "
+            f"{', '.join(stale_restore_failures)}"
+        )
+        cleanup_msg = "A temporary restore file from an earlier session couldn't be deleted."
+        api.backup_notice = f"{api.backup_notice} {cleanup_msg}" if api.backup_notice else cleanup_msg
+    db_existed_before = os.path.exists(db_path)
 
     # Launch backup runs BEFORE open_db, so every launch snapshot is a
     # pre-migration copy: open_db's schema migrations must never run first
@@ -2511,11 +2619,13 @@ def main():
         # Failure wins over the fallback notice: a fallback that then failed
         # to write must not report that the backup was saved.
         if not ok:
-            api.backup_notice = f"Today's backup couldn't be saved. Tried to write it to {actual_dir}."
+            backup_msg = f"Today's backup couldn't be saved. Tried to write it to {actual_dir}."
+            api.backup_notice = f"{api.backup_notice} {backup_msg}" if api.backup_notice else backup_msg
         elif used_fallback:
-            api.backup_notice = (
+            backup_msg = (
                 f"Backup folder wasn't reachable. Today's backup was saved to {actual_dir} instead."
             )
+            api.backup_notice = f"{api.backup_notice} {backup_msg}" if api.backup_notice else backup_msg
         if ok and prune_failed:
             api.log(f"Launch prune couldn't delete {len(prune_failed)} file(s) in {actual_dir}")
             prune_msg = _prune_failed_message(len(prune_failed))
