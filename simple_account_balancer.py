@@ -211,6 +211,45 @@ def cents_to_decimal_str(cents: int) -> str:
     return f"-{s}" if neg else s
 
 
+# Excel and other spreadsheets treat a cell starting with one of these as a
+# formula (tab and carriage return can hide one).
+_CSV_FORMULA_LEADERS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def csv_safe_text(value) -> str:
+    """Make user-typed text safe for a CSV cell: text that a spreadsheet would
+    run as a formula gets a leading apostrophe so it shows as plain text."""
+    text = "" if value is None else str(value)
+    if text.startswith(_CSV_FORMULA_LEADERS):
+        return "'" + text
+    return text
+
+
+def csv_export_rows(account_name, range_text, export_date, rows) -> list:
+    """Build every row of the register CSV export. Text that comes from the
+    user or the page (account name, date range, payee, category, notes) is
+    passed through csv_safe_text; transaction dates and amounts stay plain
+    values so spreadsheets read them as numbers, including negative balances."""
+    out = [
+        [csv_safe_text(account_name), csv_safe_text(range_text), f"Exported {export_date}"],
+        ["Date", "Payee / Description", "Category", "Notes", "Withdraw", "Deposit", "Balance"],
+    ]
+    for r in rows:
+        withdraw = cents_to_decimal_str(-r["amount_cents"]) if r["amount_cents"] < 0 else ""
+        deposit = cents_to_decimal_str(r["amount_cents"]) if r["amount_cents"] > 0 else ""
+        balance = cents_to_decimal_str(r["balance_cents"])
+        out.append([
+            r["date"],
+            csv_safe_text(r["payee"]),
+            csv_safe_text(r["category"]),
+            csv_safe_text(r["notes"]),
+            withdraw,
+            deposit,
+            balance,
+        ])
+    return out
+
+
 _INVALID_FILENAME_CHARS = '<>:"/\\|?*'
 
 
@@ -1929,19 +1968,10 @@ class Api:
             import csv
 
             with open(path, "w", encoding="utf-8-sig", newline="") as f:
-                writer = csv.writer(f)
                 range_text = "All history" if all_history else f"{from_s or 'start'} to {to_s or 'today'}"
-                writer.writerow(
-                    [account_name, range_text, f"Exported {datetime.date.today().isoformat()}"]
+                csv.writer(f).writerows(
+                    csv_export_rows(account_name, range_text, datetime.date.today().isoformat(), rows)
                 )
-                writer.writerow(
-                    ["Date", "Payee / Description", "Category", "Notes", "Withdraw", "Deposit", "Balance"]
-                )
-                for r in rows:
-                    withdraw = cents_to_decimal_str(-r["amount_cents"]) if r["amount_cents"] < 0 else ""
-                    deposit = cents_to_decimal_str(r["amount_cents"]) if r["amount_cents"] > 0 else ""
-                    balance = cents_to_decimal_str(r["balance_cents"])
-                    writer.writerow([r["date"], r["payee"], r["category"], r["notes"], withdraw, deposit, balance])
 
             self.log(f"Exported {len(rows)} transactions to {path}")
             return {"ok": True, "path": path, "count": len(rows)}
