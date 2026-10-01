@@ -730,6 +730,14 @@ def _update_error_reason(exc: BaseException) -> str:
 
 
 _DATABASE_FAILURE_MESSAGE = "Something went wrong saving your data. Please restart the app."
+_AUTOPAY_POST_FAILED_MESSAGE = (
+    "Autopays couldn't be added to the register today. Nothing was posted, and "
+    "the app will try again next launch."
+)
+_AUTOPAY_SAVED_POST_FAILED_MESSAGE = (
+    "The autopay was saved, but payments already due couldn't be added. "
+    "The app will try again next launch."
+)
 
 
 def _database_call(method):
@@ -742,7 +750,7 @@ def _database_call(method):
                 if method.__name__ == "close_conn":
                     return False
                 if method.__name__ == "post_due_autopays":
-                    return 0
+                    return None
                 return {"ok": False, "error": _DATABASE_FAILURE_MESSAGE}
 
             self._database_call_depth += 1
@@ -782,6 +790,7 @@ class Api:
         self._debug_path = None
         self.backup_notice = None
         self.autopay_notice = None
+        self.autopay_notice_is_error = False
 
     def set_window(self, w):
         self._window = w
@@ -883,6 +892,7 @@ class Api:
                 "backup_keep": _clamp_backup_keep(prefs.get("backup_keep")),
                 "backup_notice": self.backup_notice,
                 "autopay_notice": self.autopay_notice,
+                "autopay_notice_is_error": self.autopay_notice_is_error,
             }
         except Exception as e:
             self.log(f"get_config failed: {e}")
@@ -1472,16 +1482,26 @@ class Api:
             self._conn.commit()
             self.log(f"Added autopay, next post {post_s}, next pay {pay_s}")
             posted = 0
+            post_failed = False
             try:
-                posted = self.post_due_autopays()
+                post_result = self.post_due_autopays()
+                if post_result is None:
+                    post_failed = True
+                else:
+                    posted = post_result
             except Exception as e:
                 self.log(f"post_due_autopays call failed: {e}")
+                post_failed = True
             # This posting pass is triggered from the UI, not launch, so don't
             # leave a stale launch notice for the next startup to pick up.
             self.autopay_notice = None
+            self.autopay_notice_is_error = False
             result = self.get_autopays(account["id"])
             if result.get("ok"):
                 result["posted"] = posted
+                if post_failed:
+                    result["post_failed"] = True
+                    result["post_error"] = _AUTOPAY_SAVED_POST_FAILED_MESSAGE
             return result
         except Exception as e:
             self.log(f"add_autopay failed: {e}")
@@ -1531,16 +1551,26 @@ class Api:
             self._conn.commit()
             self.log(f"Updated autopay {autopay_id}, next post {post_s}, next pay {pay_s}")
             posted = 0
+            post_failed = False
             try:
-                posted = self.post_due_autopays()
+                post_result = self.post_due_autopays()
+                if post_result is None:
+                    post_failed = True
+                else:
+                    posted = post_result
             except Exception as e:
                 self.log(f"post_due_autopays call failed: {e}")
+                post_failed = True
             # This posting pass is triggered from the UI, not launch, so don't
             # leave a stale launch notice for the next startup to pick up.
             self.autopay_notice = None
+            self.autopay_notice_is_error = False
             result = self.get_autopays(row["account_id"])
             if result.get("ok"):
                 result["posted"] = posted
+                if post_failed:
+                    result["post_failed"] = True
+                    result["post_error"] = _AUTOPAY_SAVED_POST_FAILED_MESSAGE
             return result
         except Exception as e:
             self.log(f"update_autopay failed: {e}")
@@ -1617,12 +1647,15 @@ class Api:
                 self.autopay_notice = "Added 1 autopay to the register."
             elif posted_count > 1:
                 self.autopay_notice = f"Added {posted_count} autopays to the register."
+            self.autopay_notice_is_error = False
             self.log(f"post_due_autopays: posted {posted_count} transaction(s)")
             return posted_count
         except Exception as e:
             self._conn.rollback()
             self.log(f"post_due_autopays failed: {e}")
-            return 0
+            self.autopay_notice = _AUTOPAY_POST_FAILED_MESSAGE
+            self.autopay_notice_is_error = True
+            return None
 
     # --- compare ---------------------------------------------------------------
     @_database_call
@@ -2736,6 +2769,8 @@ def main():
         api.post_due_autopays()
     except Exception as e:
         api.log(f"post_due_autopays call failed: {e}")
+        api.autopay_notice = _AUTOPAY_POST_FAILED_MESSAGE
+        api.autopay_notice_is_error = True
 
     win = webview.create_window(
         "Simple Account Balancer",
