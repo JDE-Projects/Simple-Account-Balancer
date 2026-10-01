@@ -2496,6 +2496,7 @@ async function confirmRestore(){
   applyConfig(r);
   closeAccountModal();
   await Promise.all([refreshForActiveAccount(), refreshCategories()]);
+  if (r.warning) showBackupNotice(r.warning);
 }
 
 /* ---------- account settings modal, delete account ---------- */

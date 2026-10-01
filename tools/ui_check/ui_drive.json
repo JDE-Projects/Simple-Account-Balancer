@@ -12,6 +12,11 @@
       "script": "tools/ui_check/restore.js",
       "fixture": "tools/ui_check/fixture_restore.py",
       "timeout_s": 120
+    },
+    "prune-errors": {
+      "script": "tools/ui_check/prune_errors.js",
+      "fixture": "tools/ui_check/fixture_prune_errors.py",
+      "timeout_s": 120
     }
   }
 }

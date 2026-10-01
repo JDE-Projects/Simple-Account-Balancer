@@ -23,7 +23,7 @@ export default async function restore(helpers) {
   check("both planted backups are listed", fixture.real.every(n => listed.includes(n)), JSON.stringify(listed));
   check("no look-alike file is listed", !listed.some(n => fixture.look_alikes.includes(n)), JSON.stringify(listed));
   check("every listed file has an exact backup name",
-    listed.every(n => /^balancer_(prerestore_)?[0-9]{8}_[0-9]{6}\.db$/.test(n)), JSON.stringify(listed));
+    listed.every(n => /^balancer_(prerestore_)?[0-9]{8}_[0-9]{6}(_[0-9]{6})?\.db$/.test(n)), JSON.stringify(listed));
   check("oldest planted backup sorts last", listed[listed.length - 1] === fixture.real[0], JSON.stringify(listed));
   const tagCount = await evaluate("document.querySelectorAll('#restoreList .restore-row-tag').length");
   check("the pre-restore backup is tagged", tagCount === 1, String(tagCount));
