@@ -29,10 +29,12 @@ import sqlite3
 import ssl
 import sys
 import tempfile
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from functools import wraps
 
 import webview
 
@@ -384,7 +386,7 @@ def open_db(path: str) -> sqlite3.Connection:
     """Open (creating if missing) the SQLite database and ensure the schema.
     Refuses to touch a database stamped with a schema newer than this build
     understands; see NewerSchemaError."""
-    conn = sqlite3.connect(path, check_same_thread=False)
+    conn = sqlite3.connect(path, check_same_thread=False, isolation_level="")
     try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
@@ -727,27 +729,80 @@ def _update_error_reason(exc: BaseException) -> str:
     return text
 
 
+_DATABASE_FAILURE_MESSAGE = "Something went wrong saving your data. Please restart the app."
+_AUTOPAY_POST_FAILED_MESSAGE = (
+    "Autopays couldn't be added to the register today. Nothing was posted, and "
+    "the app will try again next launch."
+)
+_AUTOPAY_SAVED_POST_FAILED_MESSAGE = (
+    "The autopay was saved, but payments already due couldn't be added. "
+    "The app will try again next launch."
+)
+
+
+def _database_call(method):
+    """Serialize Api database access and discard abandoned write transactions."""
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._db_lock:
+            if self._database_failed:
+                self.log(f"{method.__name__} refused after database rollback failure")
+                if method.__name__ == "close_conn":
+                    return False
+                if method.__name__ == "post_due_autopays":
+                    return None
+                return {"ok": False, "error": _DATABASE_FAILURE_MESSAGE}
+
+            self._database_call_depth += 1
+            try:
+                return method(self, *args, **kwargs)
+            finally:
+                self._database_call_depth -= 1
+                if self._database_call_depth == 0:
+                    try:
+                        if self._conn is not None and self._conn.in_transaction:
+                            self._conn.rollback()
+                            self.log(f"{method.__name__} left uncommitted work; rolled back")
+                    except Exception as e:
+                        self.log(f"{method.__name__} could not roll back database work: {e}")
+                        try:
+                            if self._conn is not None:
+                                self._conn.close()
+                        except Exception as close_error:
+                            self.log(f"{method.__name__} could not close the database: {close_error}")
+                        self._conn = None
+                        self._database_failed = True
+
+    return wrapped
+
+
 class Api:
     """Bridge exposed to the UI. Methods return JSON-able dicts; the UI awaits."""
 
     def __init__(self):
         self._window = None
         self._conn = None
+        self._db_lock = threading.RLock()
+        self._database_call_depth = 0
+        self._database_failed = False
         self._db_path = None
         self._debug = False
         self._debug_path = None
         self.backup_notice = None
         self.autopay_notice = None
+        self.autopay_notice_is_error = False
 
     def set_window(self, w):
         self._window = w
 
+    @_database_call
     def set_conn(self, conn: sqlite3.Connection):
         self._conn = conn
 
     def set_db_path(self, path: str):
         self._db_path = path
 
+    @_database_call
     def close_conn(self):
         """Close whichever connection is currently live. restore_backup can
         swap in a new connection mid-session, so callers (main() at exit)
@@ -804,6 +859,7 @@ class Api:
             "starting_balance_changed_at": account["starting_balance_changed_at"],
         }
 
+    @_database_call
     def get_config(self):
         """Initial payload the UI loads on startup."""
         try:
@@ -836,11 +892,13 @@ class Api:
                 "backup_keep": _clamp_backup_keep(prefs.get("backup_keep")),
                 "backup_notice": self.backup_notice,
                 "autopay_notice": self.autopay_notice,
+                "autopay_notice_is_error": self.autopay_notice_is_error,
             }
         except Exception as e:
             self.log(f"get_config failed: {e}")
             return {"ok": False, "error": "Couldn't load the app's configuration."}
 
+    @_database_call
     def create_account(self, name, starting_balance, starting_date):
         """Create an account. Used both for first-run setup and for 'Add
         account' once other accounts already exist. The new account becomes
@@ -872,6 +930,7 @@ class Api:
             self.log(f"create_account failed: {e}")
             return {"ok": False, "error": "Couldn't create the account."}
 
+    @_database_call
     def set_active_account(self, account_id):
         """Switch which account the UI shows and operates on."""
         try:
@@ -888,6 +947,7 @@ class Api:
             self.log(f"set_active_account failed: {e}")
             return {"ok": False, "error": "Couldn't switch accounts."}
 
+    @_database_call
     def delete_account(self, account_id):
         """Delete an account and its transactions and autopays. Refuses to
         delete the only account. If the deleted account was active, the
@@ -921,6 +981,7 @@ class Api:
             self.log(f"delete_account failed: {e}")
             return {"ok": False, "error": "Couldn't delete the account."}
 
+    @_database_call
     def update_account(self, account_id, name, starting_balance, starting_date):
         """Edit account name / starting balance / starting date. Recalcs the register."""
         try:
@@ -959,6 +1020,7 @@ class Api:
             return {"ok": False, "error": "Couldn't update the account."}
 
     # --- categories -------------------------------------------------------------
+    @_database_call
     def get_categories(self):
         """Name-sorted category list with usage counts (case-insensitive)."""
         try:
@@ -976,6 +1038,7 @@ class Api:
             self.log(f"get_categories failed: {e}")
             return {"ok": False, "error": "Couldn't load the categories."}
 
+    @_database_call
     def add_category(self, name):
         try:
             name_s = (name or "").strip()
@@ -990,6 +1053,7 @@ class Api:
             self.log(f"add_category failed: {e}")
             return {"ok": False, "error": "Couldn't add the category."}
 
+    @_database_call
     def rename_category(self, category_id, new_name):
         """Rename a category and carry the change over to past transactions.
         If the new name collides with another existing category, the two are
@@ -1028,6 +1092,7 @@ class Api:
             self.log(f"rename_category failed: {e}")
             return {"ok": False, "error": "Couldn't rename the category."}
 
+    @_database_call
     def delete_category(self, category_id, reassign_to=None):
         """Delete a category. Past transactions keep the old label unless
         reassign_to names another category to move them to."""
@@ -1053,6 +1118,7 @@ class Api:
             return {"ok": False, "error": "Couldn't delete the category."}
 
     # --- transactions ---------------------------------------------------------
+    @_database_call
     def get_payees(self, account_id=None):
         """Distinct payees for the account, most-recent-first, each carrying
         the category from its most recent transaction (max date, then max id)."""
@@ -1108,6 +1174,7 @@ class Api:
             )
         return computed
 
+    @_database_call
     def get_transactions(self, account_id=None, from_date=None, to_date=None, search=""):
         """Rows for the given date range and search text, with balances computed
         over the FULL history so the first visible row's balance is correct.
@@ -1162,6 +1229,7 @@ class Api:
             self.log(f"get_transactions failed: {e}")
             return {"ok": False, "error": "Couldn't load the transactions."}
 
+    @_database_call
     def add_transaction(self, account_id, date, payee, category, notes, amount, direction):
         try:
             account = self._get_account(account_id)
@@ -1202,6 +1270,7 @@ class Api:
             self.log(f"add_transaction failed: {e}")
             return {"ok": False, "error": "Couldn't add the transaction."}
 
+    @_database_call
     def update_transaction(self, transaction_id, date, payee, category, notes, amount, direction):
         try:
             cur = self._conn.cursor()
@@ -1250,6 +1319,7 @@ class Api:
             self.log(f"update_transaction failed: {e}")
             return {"ok": False, "error": "Couldn't update the transaction."}
 
+    @_database_call
     def delete_transaction(self, transaction_id):
         try:
             cur = self._conn.cursor()
@@ -1264,6 +1334,7 @@ class Api:
             self.log(f"delete_transaction failed: {e}")
             return {"ok": False, "error": "Couldn't delete the transaction."}
 
+    @_database_call
     def reorder_transactions(self, account_id, date, ordered_ids):
         """Set the within-day display order for one date's transactions. The
         caller supplies the full set of that day's ids in the new order;
@@ -1301,6 +1372,7 @@ class Api:
             self.log(f"reorder_transactions failed: {e}")
             return {"ok": False, "error": "Couldn't reorder the transactions."}
 
+    @_database_call
     def confirm_estimated_amount(self, transaction_id, amount):
         """Correct an estimated autopay posting's amount. Only the amount and
         the estimated flag change: the row's existing sign (withdraw stays
@@ -1327,6 +1399,7 @@ class Api:
             return {"ok": False, "error": "Couldn't confirm the amount."}
 
     # --- autopays ---------------------------------------------------------------
+    @_database_call
     def get_autopays(self, account_id):
         """Autopay rules for the account, ordered by their post-day anchor
         then payee, so the list reads roughly in the order rules land in
@@ -1362,6 +1435,7 @@ class Api:
             self.log(f"get_autopays failed: {e}")
             return {"ok": False, "error": "Couldn't load the autopays."}
 
+    @_database_call
     def add_autopay(self, account_id, payee, category, notes, amount, direction, post_date, pay_date, is_variable=0):
         """Create a recurring autopay rule. post_date and pay_date are the
         first occurrence; their day numbers become the hidden post_day and
@@ -1408,21 +1482,32 @@ class Api:
             self._conn.commit()
             self.log(f"Added autopay, next post {post_s}, next pay {pay_s}")
             posted = 0
+            post_failed = False
             try:
-                posted = self.post_due_autopays()
+                post_result = self.post_due_autopays()
+                if post_result is None:
+                    post_failed = True
+                else:
+                    posted = post_result
             except Exception as e:
                 self.log(f"post_due_autopays call failed: {e}")
+                post_failed = True
             # This posting pass is triggered from the UI, not launch, so don't
             # leave a stale launch notice for the next startup to pick up.
             self.autopay_notice = None
+            self.autopay_notice_is_error = False
             result = self.get_autopays(account["id"])
             if result.get("ok"):
                 result["posted"] = posted
+                if post_failed:
+                    result["post_failed"] = True
+                    result["post_error"] = _AUTOPAY_SAVED_POST_FAILED_MESSAGE
             return result
         except Exception as e:
             self.log(f"add_autopay failed: {e}")
             return {"ok": False, "error": "Couldn't add the autopay."}
 
+    @_database_call
     def update_autopay(self, autopay_id, payee, category, notes, amount, direction, post_date, pay_date, is_variable=0):
         """Edit an autopay rule. Re-anchoring post_day/pay_day from the newly
         chosen dates is the point of editing them, so both are recomputed.
@@ -1466,21 +1551,32 @@ class Api:
             self._conn.commit()
             self.log(f"Updated autopay {autopay_id}, next post {post_s}, next pay {pay_s}")
             posted = 0
+            post_failed = False
             try:
-                posted = self.post_due_autopays()
+                post_result = self.post_due_autopays()
+                if post_result is None:
+                    post_failed = True
+                else:
+                    posted = post_result
             except Exception as e:
                 self.log(f"post_due_autopays call failed: {e}")
+                post_failed = True
             # This posting pass is triggered from the UI, not launch, so don't
             # leave a stale launch notice for the next startup to pick up.
             self.autopay_notice = None
+            self.autopay_notice_is_error = False
             result = self.get_autopays(row["account_id"])
             if result.get("ok"):
                 result["posted"] = posted
+                if post_failed:
+                    result["post_failed"] = True
+                    result["post_error"] = _AUTOPAY_SAVED_POST_FAILED_MESSAGE
             return result
         except Exception as e:
             self.log(f"update_autopay failed: {e}")
             return {"ok": False, "error": "Couldn't update the autopay."}
 
+    @_database_call
     def delete_autopay(self, autopay_id):
         try:
             cur = self._conn.cursor()
@@ -1495,6 +1591,7 @@ class Api:
             self.log(f"delete_autopay failed: {e}")
             return {"ok": False, "error": "Couldn't delete the autopay."}
 
+    @_database_call
     def post_due_autopays(self):
         """Called from main() at launch, not from the UI. Posts a real
         uncleared transaction for every autopay rule whose next_post_date has
@@ -1550,14 +1647,18 @@ class Api:
                 self.autopay_notice = "Added 1 autopay to the register."
             elif posted_count > 1:
                 self.autopay_notice = f"Added {posted_count} autopays to the register."
+            self.autopay_notice_is_error = False
             self.log(f"post_due_autopays: posted {posted_count} transaction(s)")
             return posted_count
         except Exception as e:
             self._conn.rollback()
             self.log(f"post_due_autopays failed: {e}")
-            return 0
+            self.autopay_notice = _AUTOPAY_POST_FAILED_MESSAGE
+            self.autopay_notice_is_error = True
+            return None
 
     # --- compare ---------------------------------------------------------------
+    @_database_call
     def get_compare_data(self, account_id=None, from_date=None, to_date=None):
         """Return read-only Compare rows and the full register balance.
 
@@ -1605,6 +1706,7 @@ class Api:
             self.log(f"get_compare_data failed: {e}")
             return {"ok": False, "error": "Couldn't load the compare data."}
 
+    @_database_call
     def find_compare_matches(self, account_id=None, amount=None, from_date=None, to_date=None):
         """Look for likely causes of a Compare difference: a single transaction
         that matches it exactly, one that matches half of it (a wrong withdraw
@@ -1725,6 +1827,46 @@ class Api:
             return {"ok": False, "error": "Couldn't search for the comparison."}
 
     # --- CSV export -------------------------------------------------------------
+    @_database_call
+    def _export_csv_snapshot(self, account_id, from_date, to_date, range_label):
+        account = self._get_account(account_id)
+        if account is None:
+            return {"ok": False, "error": "No account exists yet."}
+        computed = self._rows_with_balance(account)
+
+        from_s = (from_date or "").strip()
+        to_s = (to_date or "").strip()
+        all_history = not from_s and not to_s
+
+        rows = computed
+        if from_s:
+            rows = [r for r in rows if r["date"] >= from_s]
+        if to_s:
+            rows = [r for r in rows if r["date"] <= to_s]
+
+        expected_tokens = (
+            "AllHistory",
+            "Last7Days",
+            "Last14Days",
+            "Last30Days",
+            "Last90Days",
+            "CustomRange",
+        )
+        token = (range_label or "").strip()
+        if token not in expected_tokens:
+            token = "AllHistory" if all_history else "CustomRange"
+        return {
+            "ok": True,
+            "account_name": account["name"],
+            "rows": rows,
+            "from_date": from_s,
+            "to_date": to_s,
+            "all_history": all_history,
+            "default_name": sanitize_filename(
+                f"{account['name']}_Export_{token}_{datetime.date.today().strftime('%m%d%Y')}.csv"
+            ),
+        }
+
     def export_csv(self, account_id, from_date, to_date, range_label=""):
         """Export the register to a CSV file via a native save dialog. An
         empty from_date and to_date together mean all history (no default
@@ -1732,35 +1874,14 @@ class Api:
         range_label is the preset token the UI picked (e.g. AllHistory,
         Last30Days, CustomRange); it only affects the default filename."""
         try:
-            account = self._get_account(account_id)
-            if account is None:
-                return {"ok": False, "error": "No account exists yet."}
-            computed = self._rows_with_balance(account)
-
-            from_s = (from_date or "").strip()
-            to_s = (to_date or "").strip()
-            all_history = not from_s and not to_s
-
-            rows = computed
-            if from_s:
-                rows = [r for r in rows if r["date"] >= from_s]
-            if to_s:
-                rows = [r for r in rows if r["date"] <= to_s]
-
-            expected_tokens = (
-                "AllHistory",
-                "Last7Days",
-                "Last14Days",
-                "Last30Days",
-                "Last90Days",
-                "CustomRange",
-            )
-            token = (range_label or "").strip()
-            if token not in expected_tokens:
-                token = "AllHistory" if all_history else "CustomRange"
-            default_name = sanitize_filename(
-                f"{account['name']}_Export_{token}_{datetime.date.today().strftime('%m%d%Y')}.csv"
-            )
+            snapshot = self._export_csv_snapshot(account_id, from_date, to_date, range_label)
+            if not snapshot["ok"]:
+                return snapshot
+            account_name = snapshot["account_name"]
+            rows = snapshot["rows"]
+            from_s = snapshot["from_date"]
+            to_s = snapshot["to_date"]
+            all_history = snapshot["all_history"]
 
             documents_dir = os.path.join(os.path.expanduser("~"), "Documents")
             start_dir = documents_dir if os.path.isdir(documents_dir) else app_dir()
@@ -1768,7 +1889,7 @@ class Api:
             result = self._window.create_file_dialog(
                 webview.FileDialog.SAVE,
                 directory=start_dir,
-                save_filename=default_name,
+                save_filename=snapshot["default_name"],
                 file_types=("CSV Files (*.csv)",),
             )
             if not result:
@@ -1785,7 +1906,7 @@ class Api:
                 writer = csv.writer(f)
                 range_text = "All history" if all_history else f"{from_s or 'start'} to {to_s or 'today'}"
                 writer.writerow(
-                    [account["name"], range_text, f"Exported {datetime.date.today().isoformat()}"]
+                    [account_name, range_text, f"Exported {datetime.date.today().isoformat()}"]
                 )
                 writer.writerow(
                     ["Date", "Payee / Description", "Category", "Notes", "Withdraw", "Deposit", "Balance"]
@@ -2017,6 +2138,7 @@ class Api:
             self.log(f"list_backups failed: {e}")
             return {"ok": False, "error": "Couldn't list backups."}
 
+    @_database_call
     def preview_restore(self, filename):
         """Compare a backup file against the live database without changing
         anything, so the UI can show what a restore would do."""
@@ -2051,6 +2173,7 @@ class Api:
             self.log(f"preview_restore failed: {e}")
             return {"ok": False, "error": "Couldn't read that backup file."}
 
+    @_database_call
     def restore_backup(self, filename, fingerprint=None):
         """Restore the live database from a backup file. Takes a pre-restore
         safety backup of the current live data first, so this can be undone."""
@@ -2646,6 +2769,8 @@ def main():
         api.post_due_autopays()
     except Exception as e:
         api.log(f"post_due_autopays call failed: {e}")
+        api.autopay_notice = _AUTOPAY_POST_FAILED_MESSAGE
+        api.autopay_notice_is_error = True
 
     win = webview.create_window(
         "Simple Account Balancer",

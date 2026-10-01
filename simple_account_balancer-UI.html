@@ -548,6 +548,9 @@ table.register tr.compare-flash { animation:compareFlash 1.2s ease; }
 }
 .autopay-notice .notice-dismiss:hover { opacity:1; background:color-mix(in srgb, var(--accent) 15%, transparent); }
 .autopay-notice .notice-dismiss svg { width:11px; height:11px; }
+.autopay-notice.is-error,
+.autopay-notice.is-error .notice-dismiss { color:var(--red); }
+.autopay-notice.is-error .notice-dismiss:hover { background:color-mix(in srgb, var(--red) 15%, transparent); }
 
 /* Lives in the toolbar's center dead-space: the toolbar is space-between, so
    showing/hiding this never shifts the range control or the right-hand buttons,
@@ -2970,6 +2973,9 @@ async function submitAutopayForm(){
   }
   showApListScreen();
   renderApList();
+  if (r.post_failed){
+    showAutopayNotice(r.post_error, true);
+  }
 }
 
 function startDeleteAutopay(id){
@@ -3022,8 +3028,9 @@ function dismissBackupNotice(){
 }
 
 /* ---------- autopay launch notice (bottom bar, dismissible for the session) ---------- */
-function showAutopayNotice(text){
+function showAutopayNotice(text, isError){
   $("autopayNoticeText").textContent = text;
+  $("autopayNotice").classList.toggle("is-error", !!isError);
   $("autopayNotice").style.display = "inline-flex";
 }
 function dismissAutopayNotice(){
@@ -3088,7 +3095,7 @@ async function boot(){
     showBackupNotice(cfg.backup_notice);
   }
   if (cfg.autopay_notice){
-    showAutopayNotice(cfg.autopay_notice);
+    showAutopayNotice(cfg.autopay_notice, cfg.autopay_notice_is_error);
   }
 
   initRegisterUI();

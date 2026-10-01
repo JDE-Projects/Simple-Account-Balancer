@@ -18,6 +18,16 @@
       "fixture": "tools/ui_check/fixture_restore.py",
       "timeout_s": 120
     },
+    "autopay": {
+      "script": "tools/ui_check/autopay.js",
+      "fixture": "tools/ui_check/fixture_autopay.py",
+      "timeout_s": 120
+    },
+    "autopay-fail": {
+      "script": "tools/ui_check/autopay_fail.js",
+      "fixture": "tools/ui_check/fixture_autopay_fail.py",
+      "timeout_s": 120
+    },
     "prune-errors": {
       "script": "tools/ui_check/prune_errors.js",
       "fixture": "tools/ui_check/fixture_prune_errors.py",
