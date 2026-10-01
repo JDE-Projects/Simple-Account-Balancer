@@ -267,7 +267,8 @@ def test_make_backup_never_overwrites_a_taken_name(tmp_path, monkeypatch):
 
 def test_new_backups_carry_microseconds(tmp_path):
     db = tmp_path / "live.db"
-    db.write_text("live")
+    conn = sab.open_db(str(db))
+    conn.close()
     backups = tmp_path / "backups"
     ok, _ = _make_backup(str(db), str(backups), keep=5)
     path, _ = _make_prerestore_backup(str(db), str(backups))
