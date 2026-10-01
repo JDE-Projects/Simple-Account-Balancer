@@ -60,6 +60,7 @@ REM --noconfirm replaces the previous dist folder without asking.
   --add-data "simple_account_balancer-UI.html;." ^
   --add-data "simple_account_balancer.png;." ^
   --add-data "fonts;fonts" ^
+  --add-data "licenses;licenses" ^
   --collect-all PySide6 ^
   --collect-all qtpy ^
   --hidden-import truststore ^
