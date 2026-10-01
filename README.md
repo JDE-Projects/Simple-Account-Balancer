@@ -122,8 +122,11 @@ pipeline from this repo. You can also check the file against the published
 - No accounts, cloud, telemetry, or bank connections, ever.
 - Optional debug log, off by default. When on, it writes
   `Debug_Log_MMDDYYYY_HHMMSS.txt` next to the app. It records actions and
-  errors only, never payees, amounts, or balances, so it is safe to attach
-  to a bug report.
+  errors with record numbers, dates, and counts. It never records payees,
+  categories, notes, amounts, balances, or account names, and any file path
+  or quoted value inside an error message is replaced with `<path>` or
+  `<text>`. It does show when you used the app and the dates of transactions
+  you added or changed, so read it before attaching it to a bug report.
 - **Network use.** Other than the job you ask of it, this app makes one automatic network call: a check to GitHub for a newer release (at startup and when you press **Check for updates**), which sends only a version request. It collects and sends no personal data, usage data, or analytics.
 
 ## A note on how this was built

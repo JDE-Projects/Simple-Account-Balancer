@@ -259,6 +259,30 @@ def sanitize_filename(name: str) -> str:
     return cleaned.strip()
 
 
+# Quoted text in a log line, as Python's error messages print file names and
+# rejected values. The quote must not follow a letter or digit, so the
+# apostrophe in words like "couldn't" never opens a match.
+_LOG_QUOTED_RE = re.compile(r"""(?<![\w])(['"])(.*?)\1""")
+# An unquoted file path runs to the end of the line: a drive path (C:\ or C:/)
+# or a network path (\\server or //server, but not the // in https://).
+_LOG_BARE_PATH_RE = re.compile(r"""(?:\b[A-Za-z]:[\\/]|(?<![\w:])[\\/]{2}[^\\/\s]).*""")
+
+
+def redact_log_text(text: str) -> str:
+    """Strip private details from a debug log line. File paths (which carry
+    the Windows username, share names, and export file names that contain
+    the account name) become <path>; other quoted text inside error messages,
+    which can be a value the user typed, becomes <text>. Ids, dates, counts,
+    and plain messages are kept."""
+    def _quoted(m):
+        quote, inner = m.group(1), m.group(2)
+        kind = "<path>" if ("\\" in inner or "/" in inner) else "<text>"
+        return f"{quote}{kind}{quote}"
+
+    text = _LOG_QUOTED_RE.sub(_quoted, str(text))
+    return _LOG_BARE_PATH_RE.sub("<path>", text)
+
+
 # ---------------------------------------------------------------------------
 # Preferences: a small local file next to the app, not stored in the db.
 # Module-level so main() can read it before any Api/window exists (needed for
@@ -1973,7 +1997,7 @@ class Api:
                     csv_export_rows(account_name, range_text, datetime.date.today().isoformat(), rows)
                 )
 
-            self.log(f"Exported {len(rows)} transactions to {path}")
+            self.log(f"Exported {len(rows)} transactions to CSV")
             return {"ok": True, "path": path, "count": len(rows)}
         except Exception as e:
             self.log(f"export_csv failed: {e}")
@@ -2015,7 +2039,7 @@ class Api:
             if not save_prefs(prefs):
                 self.log("Could not save backup folder pref")
                 return {"ok": False, "error": "Couldn't save the backup folder setting."}
-            self.log(f"Backup folder moved to {folder}")
+            self.log("Backup folder moved to a custom folder")
             return {"ok": True, "backup_folder": folder, "backup_folder_is_custom": True}
         except Exception as e:
             self.log(f"choose_backup_folder failed: {e}")
@@ -2350,7 +2374,7 @@ class Api:
             result = self.get_config()
             warnings = []
             if prune_failed:
-                self.log(f"Pre-restore prune couldn't delete {len(prune_failed)} file(s) in {backups_dir}")
+                self.log(f"Pre-restore prune couldn't delete {len(prune_failed)} file(s) in the backup folder")
                 warnings.append(_prune_failed_message(len(prune_failed)))
             if rollback_cleanup_failed:
                 warnings.append("Restored, but a temporary copy in the data folder couldn't be deleted.")
@@ -2417,14 +2441,16 @@ class Api:
 
     def log(self, msg: str):
         # Privacy rule for every call site: users share this log for bug
-        # reports, so lines may carry ids, dates, counts, and paths, never
-        # payees, amounts, balances, or user-entered names.
+        # reports, so lines may carry ids, dates, and counts, never file
+        # paths, payees, amounts, balances, or user-entered names. Every line
+        # also passes through redact_log_text, which catches paths and quoted
+        # values inside error messages.
         if not self._debug or not self._debug_path:
             return
         try:
             ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             with open(self._debug_path, "a", encoding="utf-8") as f:
-                f.write(f"[{ts}] {msg}\n")
+                f.write(f"[{ts}] {redact_log_text(msg)}\n")
         except Exception:
             pass
 
@@ -2776,7 +2802,7 @@ def main():
     api.set_db_path(db_path)
     removed_restore_count, stale_restore_failures = _remove_stale_restore_files(folder)
     if removed_restore_count:
-        api.log(f"Launch cleanup removed {removed_restore_count} stale restore file(s) in {folder}")
+        api.log(f"Launch cleanup removed {removed_restore_count} stale restore file(s) in the app folder")
     if stale_restore_failures:
         api.log(
             f"Launch cleanup couldn't delete {len(stale_restore_failures)} stale restore file(s): "
@@ -2791,10 +2817,13 @@ def main():
     # and land in the backup we'd use to recover from them.
     if db_existed_before:
         ok, used_fallback, actual_dir, prune_failed = _run_backup_with_fallback(db_path)
+        folder_kind = "the fallback folder" if used_fallback else "the backup folder"
         if ok:
-            api.log(f"Launch backup created in {actual_dir}")
+            api.log(f"Launch backup created in {folder_kind}")
         else:
-            api.log(f"Launch backup failed, tried {actual_dir}")
+            api.log(f"Launch backup failed, tried {folder_kind}")
+        if used_fallback:
+            api.log("Backup folder unreachable at launch, used the fallback folder")
         # Failure wins over the fallback notice: a fallback that then failed
         # to write must not report that the backup was saved.
         if not ok:
@@ -2806,10 +2835,9 @@ def main():
             )
             api.backup_notice = f"{api.backup_notice} {backup_msg}" if api.backup_notice else backup_msg
         if ok and prune_failed:
-            api.log(f"Launch prune couldn't delete {len(prune_failed)} file(s) in {actual_dir}")
+            api.log(f"Launch prune couldn't delete {len(prune_failed)} file(s) in {folder_kind}")
             prune_msg = _prune_failed_message(len(prune_failed))
             api.backup_notice = f"{api.backup_notice} {prune_msg}" if api.backup_notice else prune_msg
-            api.log(f"Backup folder unreachable at launch, fell back to {actual_dir}")
 
     try:
         conn = open_db(db_path)
@@ -2860,10 +2888,11 @@ def main():
     try:
         if os.path.exists(db_path):
             ok, used_fallback, actual_dir, prune_failed = _run_backup_with_fallback(db_path)
+            folder_kind = "the fallback folder" if used_fallback else "the backup folder"
             if ok:
-                api.log(f"Exit backup created in {actual_dir}")
+                api.log(f"Exit backup created in {folder_kind}")
             else:
-                api.log(f"Exit backup failed, tried {actual_dir}")
+                api.log(f"Exit backup failed, tried {folder_kind}")
             # Failure wins over the fallback notice: a fallback that then
             # failed to write must not report that the backup was saved.
             if not ok:
@@ -2871,7 +2900,7 @@ def main():
             elif used_fallback:
                 _show_backup_fallback_notice(actual_dir)
             if ok and prune_failed:
-                api.log(f"Exit prune couldn't delete {len(prune_failed)} file(s) in {actual_dir}")
+                api.log(f"Exit prune couldn't delete {len(prune_failed)} file(s) in {folder_kind}")
                 _show_prune_failed_notice(len(prune_failed), actual_dir)
     except Exception:
         pass
