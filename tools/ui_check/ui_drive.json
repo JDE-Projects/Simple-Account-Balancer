@@ -42,6 +42,11 @@
       "script": "tools/ui_check/debug_log.js",
       "fixture": "tools/ui_check/fixture_debug_log.py",
       "timeout_s": 120
+    },
+    "notices": {
+      "script": "tools/ui_check/notices.js",
+      "fixture": "tools/ui_check/fixture_notices.py",
+      "timeout_s": 120
     }
   }
 }

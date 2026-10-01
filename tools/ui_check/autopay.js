@@ -1,6 +1,6 @@
 // ui_drive autopay scenario for Simple Account Balancer. The fixture plants
 // one autopay whose register date is today. Checks that the app posts it at
-// launch, dated the pay date, and says so in the teal bottom-bar notice.
+// launch, dated the pay date, and says so in the teal top banner.
 
 export default async function autopay(helpers) {
   const { evaluate, waitFor, check, screenshot, fixture } = helpers;

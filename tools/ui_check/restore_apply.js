@@ -50,7 +50,7 @@ export default async function restoreApply(helpers) {
   const err = await evaluate("document.getElementById('restore-confirm-err').textContent.trim()");
   check("the restore finished without an error", closed && err === "", err);
   const notice = await evaluate("document.getElementById('backupNotice').style.display === 'none' ? '' : document.getElementById('backupNoticeText').textContent");
-  check("the bottom bar shows no warning", notice === "", notice);
+  check("the top banner shows no warning", notice === "", notice);
 
   // d) live data now matches the backup.
   const after = await evaluate(payees);
