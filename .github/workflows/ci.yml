@@ -5,8 +5,9 @@ on:
     branches: [main]
 jobs:
   ci:
-    uses: JDE-Projects/Build-Tools/.github/workflows/ci-windows.yml@5ecb1d806d02d7dbf6af2b53c932b7e7cb64a7ed # Build-Tools main (ruff, import check, pytest)
+    uses: JDE-Projects/Build-Tools/.github/workflows/ci-windows.yml@04125a839db7cfb73c74262547b6c72e714c3b86 # Build-Tools main (ruff, import check, pytest, runtime lock check)
     permissions:
       contents: read
     with:
       entry_script: "simple_account_balancer.py"
+      verify_runtime_lock: true

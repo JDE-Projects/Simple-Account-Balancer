@@ -87,13 +87,18 @@ pipeline from this repo. You can also check the file against the published
 `.sha256`.
 
 ## Build from source (optional)
-- Python 3 on PATH.
-- `pip install -r requirements.txt` (pinned `pywebview`, `PySide6`, `qtpy`,
-  `pyinstaller`; keep PyQt6 uninstalled so the LGPL binding is the one bundled).
+- 64-bit Python 3.14 on PATH.
+- `requirements.in` lists the direct packages (`pywebview`, `PySide6`, `qtpy`,
+  `pyinstaller`, `truststore`). `requirements.txt` is the full locked list
+  generated from it by uv 0.12.17, with a checksum for every package; it is
+  never edited by hand.
 - Keep `simple_account_balancer.py`, `simple_account_balancer-UI.html`, the
   `fonts/` folder, the `.ico`, and `.png` together.
-- Run from source: `python simple_account_balancer.py`
-- Build the .exe: `Build_Simple_Account_Balancer.bat` -> `dist\Simple Account Balancer\Simple Account Balancer.exe`
+- Run from source: `pip install --require-hashes -r requirements.txt`, then
+  `python simple_account_balancer.py`
+- Build the .exe: `Build_Simple_Account_Balancer.bat` -> `dist\Simple Account Balancer\Simple Account Balancer.exe`.
+  The script builds inside a fresh `build\venv` each run and never changes the
+  PC's own Python.
 
 ## Using it
 1. On first launch, enter an account name and your starting balance as of a
