@@ -82,6 +82,27 @@ export default async function smoke(helpers) {
   const rowCountAfterBad = await evaluate("document.querySelectorAll('#registerBody tr').length");
   check("nothing was saved for the invalid amount", rowCountAfterBad === rowCountBeforeBad,
     `${rowCountBeforeBad} -> ${rowCountAfterBad}`);
+
+  // Starting an edit is a different action, so the rejected entry's message
+  // goes away; it must not come back when the edit is cancelled either.
+  await click("#registerBody tr:first-child button[title='Edit']");
+  await waitFor("document.getElementById('entryForm').classList.contains('editing')", 5000);
+  const errAfterEdit = await evaluate("document.getElementById('entry-err').textContent");
+  check("the invalid-amount message clears when an edit starts", errAfterEdit === "", errAfterEdit);
+  await click("#entryCancelBtn");
+  await waitFor("!document.getElementById('entryForm').classList.contains('editing')", 5000);
+
+  // The same message clears when the form is reset by cancelling an edit.
+  await type("#f-payee", "Bad amount");
+  await type("#f-amount", "not a number");
+  await click("#entrySubmitBtn");
+  await waitFor("document.getElementById('entry-err').textContent.trim().length > 0", 5000);
+  await click("#registerBody tr:first-child button[title='Edit']");
+  await waitFor("document.getElementById('entryForm').classList.contains('editing')", 5000);
+  await click("#entryCancelBtn");
+  await waitFor("!document.getElementById('entryForm').classList.contains('editing')", 5000);
+  const errAfterCancel = await evaluate("document.getElementById('entry-err').textContent");
+  check("no entry message is left after cancelling an edit", errAfterCancel === "", errAfterCancel);
   await type("#f-amount", "");
 
   // e) theme round trip, screenshot of each, confirmed saved through Python.
