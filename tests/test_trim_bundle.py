@@ -1,6 +1,7 @@
 """Coverage for the approved Qt bundle trimming list and safety checks."""
 
 import importlib.util
+import os
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,18 @@ def _bundle_folder(tmp_path):
 def _write_file(path):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("test", encoding="utf-8")
+
+
+def _link_folder(link, target):
+    """Point link at target: a junction on Windows (no admin rights needed),
+    a symbolic link elsewhere."""
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        link.symlink_to(target, target_is_directory=True)
 
 
 def test_removes_approved_items_and_leaves_neighbours(tmp_path, trimmer, capsys):
@@ -122,6 +135,26 @@ def test_refuses_outside_or_wrong_qt_folder(tmp_path, trimmer, capsys):
     assert "outside the app folder" in capsys.readouterr().out
     assert trimmer.trim_bundle(app, wrong_folder) == 1
     assert "must end in _internal\\PySide6" in capsys.readouterr().out
+
+
+def test_refuses_listed_links_that_point_outside(tmp_path, trimmer, capsys):
+    bundle = _bundle_folder(tmp_path)
+    internal = bundle.parent
+    outside = tmp_path / "outside"
+    _write_file(outside / "keep.txt")
+    _link_folder(bundle / "qml" / "QtCharts", outside)
+    _link_folder(internal / "LIBPQ.dll", outside)
+
+    assert trimmer.trim_bundle(internal.parent) == 1
+
+    assert (outside / "keep.txt").exists()
+    assert (bundle / "qml" / "QtCharts").exists()
+    assert (internal / "LIBPQ.dll").exists()
+    output = capsys.readouterr().out
+    assert "Refusing to remove outside the Qt bundle" in output
+    assert "Refusing to remove outside the app bundle" in output
+    assert "Listed item still present: qml/QtCharts" in output
+    assert "Listed item still present: LIBPQ.dll" in output
 
 
 def test_exits_nonzero_when_an_item_cannot_be_removed(
