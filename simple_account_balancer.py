@@ -246,9 +246,11 @@ def csv_safe_text(value) -> str:
 
 def csv_export_rows(account_name, range_text, export_date, rows) -> list:
     """Build every row of the register CSV export. Text that comes from the
-    user or the page (account name, date range, payee, category, notes) is
-    passed through csv_safe_text; transaction dates and amounts stay plain
-    values so spreadsheets read them as numbers, including negative balances."""
+    user or the page (account name, date range, transaction date, payee,
+    category, notes) is passed through csv_safe_text. A real date never starts
+    with a formula character, so it is unchanged; a date from a hand-edited
+    backup can't run as a formula. Amounts stay plain values so spreadsheets
+    read them as numbers, including negative balances."""
     out = [
         [csv_safe_text(account_name), csv_safe_text(range_text), f"Exported {export_date}"],
         ["Date", "Payee / Description", "Category", "Notes", "Withdraw", "Deposit", "Balance"],
@@ -258,7 +260,7 @@ def csv_export_rows(account_name, range_text, export_date, rows) -> list:
         deposit = cents_to_decimal_str(r["amount_cents"]) if r["amount_cents"] > 0 else ""
         balance = cents_to_decimal_str(r["balance_cents"])
         out.append([
-            r["date"],
+            csv_safe_text(r["date"]),
             csv_safe_text(r["payee"]),
             csv_safe_text(r["category"]),
             csv_safe_text(r["notes"]),

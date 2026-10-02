@@ -21,9 +21,9 @@ def test_csv_safe_text_none_is_empty():
     assert sab.csv_safe_text(None) == ""
 
 
-def _row(payee="Store", category="Food", notes="", amount_cents=-500, balance_cents=-500):
+def _row(payee="Store", category="Food", notes="", amount_cents=-500, balance_cents=-500, date="2024-01-02"):
     return {
-        "date": "2024-01-02",
+        "date": date,
         "payee": payee,
         "category": category,
         "notes": notes,
@@ -39,6 +39,11 @@ def test_csv_export_rows_guards_every_user_text_field():
     )
     assert rows[0] == ["'=Checking", "All history", "Exported 2024-02-01"]
     assert rows[2][1:4] == ["'=cmd", "'+cat", "'@note"]
+
+
+def test_csv_export_rows_guards_transaction_date():
+    rows = sab.csv_export_rows("Checking", "All history", "2024-02-01", [_row(date='=HYPERLINK("x")')])
+    assert rows[2][0] == "'=HYPERLINK(\"x\")"
 
 
 def test_csv_export_rows_guards_range_text():
