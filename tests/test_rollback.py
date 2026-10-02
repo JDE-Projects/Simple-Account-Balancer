@@ -9,6 +9,8 @@ def _make_api(tmp_path, monkeypatch):
     backups = tmp_path / "backups"
     backups.mkdir()
     monkeypatch.setattr(sab, "effective_backup_dir", lambda: (str(backups), False))
+    # Keep pref writes from account changes inside tmp_path, not the repo.
+    monkeypatch.setattr(sab, "app_dir", lambda: str(tmp_path))
     db_path = str(tmp_path / "live.db")
     api = sab.Api()
     api.set_conn(sab.open_db(db_path))
