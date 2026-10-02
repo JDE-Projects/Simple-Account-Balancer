@@ -72,7 +72,7 @@ if errorlevel 1 (
 )
 "%VPY%" tools\trim_bundle.py "dist\Simple Account Balancer"
 if errorlevel 1 (
-    echo ERROR: Failed to remove approved Qt components from the app bundle.
+    echo ERROR: Qt bundle trim failed or was refused. See the messages above.
     %PAUSE%
     exit /b 1
 )
