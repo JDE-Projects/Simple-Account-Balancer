@@ -42,7 +42,7 @@ from app.debug_log import DebugLog
 
 import webview
 
-APP_VERSION = "1.9.1"
+APP_VERSION = "1.9.2"
 GITHUB_OWNER = "JDE-Projects"
 GITHUB_REPO = "Simple-Account-Balancer"
 
