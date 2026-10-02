@@ -1463,6 +1463,7 @@ function applyConfig(cfg){
 }
 async function refreshForActiveAccount(){
   if (editingId) cancelEdit();
+  clearEntryError();
   renderHeader();
   const tasks = [refreshPayees()];
   tasks.push(currentView === "compare" ? loadCompare() : loadRegister());
@@ -1501,8 +1502,14 @@ function clearEntryFields(keepDate){
   if (!keepDate) $("f-date").value = todayIso();
   setDirection("withdraw");
 }
+// A rejected entry's message belongs to that attempt only; clear it once the
+// user moves on so it never sits under an unrelated action.
+function clearEntryError(){
+  $("entry-err").textContent = "";
+}
 function resetEntryForm(){
   editingId = null;
+  clearEntryError();
   $("entrySubmitBtn").textContent = "Add";
   $("entryCancelBtn").style.display = "none";
   $("editingNote").style.display = "none";
@@ -1553,6 +1560,7 @@ async function submitEntry(){
 
 function startEdit(row){
   editingId = row.id;
+  clearEntryError();
   $("f-date").value = row.date;
   $("f-payee").value = row.payee;
   $("f-category").value = row.category || "";
@@ -2288,6 +2296,7 @@ async function pickAccount(id){
   // carrying them over from the account just left would silently narrow (or
   // empty) the new account's register/Compare views until the user notices.
   if (editingId) cancelEdit();
+  clearEntryError();
   currentSearch = "";
   $("searchInput").value = "";
   $("searchClear").style.display = "none";

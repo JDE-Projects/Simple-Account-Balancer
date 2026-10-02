@@ -6,7 +6,7 @@
 // backup with no error shown.
 
 export default async function restoreApply(helpers) {
-  const { click, evaluate, waitFor, check, screenshot, fixture } = helpers;
+  const { click, type, evaluate, waitFor, check, screenshot, fixture } = helpers;
 
   await waitFor("typeof api === 'function' && api() && typeof api().get_config === 'function'", 10000);
   await waitFor("document.getElementById('registerWrap').style.display !== 'none'", 10000);
@@ -25,6 +25,15 @@ export default async function restoreApply(helpers) {
 
   // b) preview the oldest backup and read what it says.
   await evaluate("refreshForActiveAccount(); true");
+
+  // Leave a rejected entry's message under the form; the restore must clear it.
+  await type("#f-payee", "Bad amount");
+  await type("#f-amount", "not a number");
+  await click("#entrySubmitBtn");
+  const entryErrShown = await waitFor("document.getElementById('entry-err').textContent.trim().length > 0", 5000)
+    .then(() => true).catch(() => false);
+  check("an invalid amount shows its message before the restore", entryErrShown);
+
   await click("#gearBtn");
   await click("button[onclick='openRestoreList()']");
   await waitFor("document.querySelectorAll('#restoreList .restore-row').length > 0", 10000);
@@ -51,6 +60,8 @@ export default async function restoreApply(helpers) {
   check("the restore finished without an error", closed && err === "", err);
   const notice = await evaluate("document.getElementById('backupNotice').style.display === 'none' ? '' : document.getElementById('backupNoticeText').textContent");
   check("the top banner shows no warning", notice === "", notice);
+  const entryErrAfter = await evaluate("document.getElementById('entry-err').textContent");
+  check("the invalid-amount message is gone after the restore", entryErrAfter === "", entryErrAfter);
 
   // d) live data now matches the backup.
   const after = await evaluate(payees);
