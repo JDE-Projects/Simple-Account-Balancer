@@ -93,3 +93,57 @@ def test_exits_nonzero_when_an_item_cannot_be_removed(
     output = capsys.readouterr().out
     assert "assistant.exe" in output
     assert "simulated locked file" in output
+
+
+def test_removes_postgres_driver_and_its_libraries(tmp_path, trimmer, capsys):
+    bundle = _bundle_folder(tmp_path)
+    internal = bundle.parent
+    _write_file(bundle / "plugins" / "sqldrivers" / "qsqlpsql.dll")
+    _write_file(bundle / "plugins" / "sqldrivers" / "qsqlite.dll")
+    for name in ("LIBPQ.dll", "libssl-3-x64.dll", "libcrypto-3-x64.dll"):
+        _write_file(internal / name)
+    for name in ("libssl-3.dll", "libcrypto-3.dll", "python313.dll"):
+        _write_file(internal / name)
+
+    assert trimmer.trim_bundle(internal.parent) == 0
+
+    assert not (bundle / "plugins" / "sqldrivers" / "qsqlpsql.dll").exists()
+    assert (bundle / "plugins" / "sqldrivers" / "qsqlite.dll").exists()
+    for name in ("LIBPQ.dll", "libssl-3-x64.dll", "libcrypto-3-x64.dll"):
+        assert not (internal / name).exists()
+    for name in ("libssl-3.dll", "libcrypto-3.dll", "python313.dll"):
+        assert (internal / name).exists()
+    output = capsys.readouterr().out
+    assert "Removed: LIBPQ.dll" in output
+    assert "Removed: plugins/sqldrivers/qsqlpsql.dll" in output
+    assert "Removed 4 approved item(s)." in output
+
+
+def test_internal_items_absent_is_fine(tmp_path, trimmer, capsys):
+    bundle = _bundle_folder(tmp_path)
+    _write_file(bundle.parent / "libssl-3.dll")
+
+    assert trimmer.trim_bundle(bundle.parents[1]) == 0
+
+    assert capsys.readouterr().out == "Removed 0 approved item(s).\n"
+
+
+def test_exits_nonzero_when_an_internal_item_cannot_be_removed(
+    tmp_path, trimmer, monkeypatch, capsys
+):
+    bundle = _bundle_folder(tmp_path)
+    blocked = bundle.parent / "LIBPQ.dll"
+    _write_file(blocked)
+
+    def fail_remove(path):
+        raise OSError("simulated locked file")
+
+    monkeypatch.setattr(trimmer, "_remove_item", fail_remove)
+
+    assert trimmer.trim_bundle(bundle.parents[1]) == 1
+
+    assert blocked.exists()
+    output = capsys.readouterr().out
+    assert "Could not remove LIBPQ.dll" in output
+    assert "Listed item still present: LIBPQ.dll" in output
+

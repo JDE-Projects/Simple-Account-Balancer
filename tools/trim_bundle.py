@@ -1,4 +1,11 @@
-"""Remove approved Qt components from a PyInstaller app bundle."""
+"""Remove approved files from a PyInstaller app bundle.
+
+Removes GPL-only Qt components and Qt developer tools from _internal\\PySide6. Also
+removes the PostgreSQL SQL driver plugin and the libraries it pulls in (LIBPQ and
+OpenSSL 3.5), which the app never uses. Python's own OpenSSL files are kept. Every
+removal path must resolve inside its anchored folder, and the script exits non-zero if
+a listed item is still present afterwards.
+"""
 
 from __future__ import annotations
 
@@ -78,8 +85,20 @@ METATYPE_PATTERNS = tuple(
     )
 )
 
-LITERAL_PATHS = DEVELOPER_TOOLS + GPL_DLLS + PYTHON_BINDINGS + QML_AND_PLUGINS + DEVELOPER_LEFTOVERS
-EXPECTED_BUNDLE_PATH = Path("_internal") / "PySide6"
+# Qt's PostgreSQL SQL driver. The app uses Python's sqlite3 and never Qt SQL.
+UNUSED_SQL_DRIVER = ("plugins/sqldrivers/qsqlpsql.dll",)
+
+LITERAL_PATHS = (
+    DEVELOPER_TOOLS + GPL_DLLS + PYTHON_BINDINGS + QML_AND_PLUGINS + DEVELOPER_LEFTOVERS
+    + UNUSED_SQL_DRIVER
+)
+
+# Files PyInstaller copies into _internal for the PostgreSQL driver, found on the build
+# machine's PATH. libssl-3.dll and libcrypto-3.dll belong to Python and are not listed.
+INTERNAL_PATHS = ("LIBPQ.dll", "libssl-3-x64.dll", "libcrypto-3-x64.dll")
+
+EXPECTED_INTERNAL_PATH = Path("_internal")
+EXPECTED_BUNDLE_PATH = EXPECTED_INTERNAL_PATH / "PySide6"
 
 
 def _path_exists(path: Path) -> bool:
@@ -110,6 +129,22 @@ def _resolve_bundle_folder(app_folder: Path, target_folder: Path | None = None) 
     return target_folder
 
 
+def _resolve_internal_folder(app_folder: Path) -> Path:
+    """Return the safe resolved _internal folder or raise ValueError."""
+    app_folder = app_folder.resolve(strict=False)
+    internal_folder = app_folder / EXPECTED_INTERNAL_PATH
+    try:
+        internal_folder = internal_folder.resolve(strict=True)
+    except OSError as error:
+        raise ValueError(f"Bundle folder does not exist: {internal_folder}") from error
+
+    if not _is_within(internal_folder, app_folder):
+        raise ValueError(f"Bundle folder is outside the app folder: {internal_folder}")
+    if internal_folder.relative_to(app_folder) != EXPECTED_INTERNAL_PATH:
+        raise ValueError(f"Bundle folder must be _internal: {internal_folder}")
+    return internal_folder
+
+
 def _matching_paths(bundle_folder: Path) -> list[Path]:
     """Return approved paths without searching outside the bundle."""
     paths = [bundle_folder.joinpath(*path.split("/")) for path in LITERAL_PATHS]
@@ -135,43 +170,63 @@ def _display_path(path: Path, bundle_folder: Path) -> str:
     return path.relative_to(bundle_folder).as_posix()
 
 
-def trim_bundle(app_folder: Path, target_folder: Path | None = None) -> int:
-    """Remove approved paths and return zero only when none remain."""
-    try:
-        bundle_folder = _resolve_bundle_folder(app_folder, target_folder)
-        candidates = _matching_paths(bundle_folder)
-    except (OSError, ValueError) as error:
-        print(f"ERROR: {error}")
-        return 1
-
+def _trim_folder(
+    anchor: Path, candidates: list[Path], label: str, find_remaining
+) -> tuple[int, bool, list[Path]]:
+    """Remove existing candidates inside anchor. Return removed count, errors, leftovers."""
     removed = 0
     errors = False
     for path in candidates:
         if not _path_exists(path):
             continue
         resolved_path = path.resolve(strict=False)
-        if not _is_within(resolved_path, bundle_folder):
-            print(f"ERROR: Refusing to remove outside the Qt bundle: {path}")
+        if not _is_within(resolved_path, anchor):
+            print(f"ERROR: Refusing to remove outside the {label}: {path}")
             errors = True
             continue
         try:
             _remove_item(path)
         except OSError as error:
-            print(f"ERROR: Could not remove {_display_path(path, bundle_folder)}: {error}")
+            print(f"ERROR: Could not remove {_display_path(path, anchor)}: {error}")
             errors = True
         else:
-            print(f"Removed: {_display_path(path, bundle_folder)}")
+            print(f"Removed: {_display_path(path, anchor)}")
             removed += 1
+    remaining = [path for path in find_remaining() if _path_exists(path)]
+    return removed, errors, remaining
+
+
+def trim_bundle(app_folder: Path, target_folder: Path | None = None) -> int:
+    """Remove approved paths and return zero only when none remain."""
+    try:
+        bundle_folder = _resolve_bundle_folder(app_folder, target_folder)
+        internal_folder = _resolve_internal_folder(app_folder)
+        qt_candidates = _matching_paths(bundle_folder)
+    except (OSError, ValueError) as error:
+        print(f"ERROR: {error}")
+        return 1
+
+    def internal_paths() -> list[Path]:
+        return [internal_folder / name for name in INTERNAL_PATHS]
 
     try:
-        remaining = [path for path in _matching_paths(bundle_folder) if _path_exists(path)]
+        qt_removed, qt_errors, qt_remaining = _trim_folder(
+            bundle_folder, qt_candidates, "Qt bundle", lambda: _matching_paths(bundle_folder)
+        )
+        in_removed, in_errors, in_remaining = _trim_folder(
+            internal_folder, internal_paths(), "app bundle", internal_paths
+        )
     except OSError as error:
         print(f"ERROR: {error}")
         return 1
-    for path in remaining:
+
+    for path in qt_remaining:
         print(f"ERROR: Listed item still present: {_display_path(path, bundle_folder)}")
-    print(f"Removed {removed} approved item(s).")
-    return 1 if errors or remaining else 0
+    for path in in_remaining:
+        print(f"ERROR: Listed item still present: {_display_path(path, internal_folder)}")
+    print(f"Removed {qt_removed + in_removed} approved item(s).")
+    failed = qt_errors or in_errors or qt_remaining or in_remaining
+    return 1 if failed else 0
 
 
 def main(argv: list[str] | None = None) -> None:
