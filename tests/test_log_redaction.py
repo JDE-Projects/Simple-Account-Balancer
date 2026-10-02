@@ -45,12 +45,10 @@ def test_redact_log_text_keeps_plain_lines(line):
 
 
 def _debug_api(tmp_path, monkeypatch):
-    log_dir = tmp_path / "logdir"
-    log_dir.mkdir()
-    monkeypatch.setattr(sab, "app_dir", lambda: str(log_dir))
+    # _make_api points app_dir at tmp_path, so the debug log lands there.
     api, _, _ = _make_api(tmp_path, monkeypatch)
     assert api.set_debug(True) == {"ok": True, "enabled": True}
-    return api, log_dir
+    return api, tmp_path
 
 
 def _log_text(log_dir):
