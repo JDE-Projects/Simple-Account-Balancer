@@ -60,12 +60,19 @@ REM --noconfirm replaces the previous dist folder without asking.
   --add-data "simple_account_balancer-UI.html;." ^
   --add-data "simple_account_balancer.png;." ^
   --add-data "fonts;fonts" ^
+  --add-data "licenses;licenses" ^
   --collect-all PySide6 ^
   --collect-all qtpy ^
   --hidden-import truststore ^
   simple_account_balancer.py
 if errorlevel 1 (
     echo ERROR: PyInstaller failed. See the messages above.
+    %PAUSE%
+    exit /b 1
+)
+"%VPY%" tools\trim_bundle.py "dist\Simple Account Balancer"
+if errorlevel 1 (
+    echo ERROR: Failed to remove approved Qt components from the app bundle.
     %PAUSE%
     exit /b 1
 )
