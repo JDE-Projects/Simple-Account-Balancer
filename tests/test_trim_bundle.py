@@ -16,6 +16,13 @@ def trimmer():
     return module
 
 
+@pytest.fixture(autouse=True)
+def checked_pyside6_version(trimmer, monkeypatch):
+    monkeypatch.setattr(
+        trimmer.metadata, "version", lambda _: trimmer.CHECKED_PYSIDE6_VERSION
+    )
+
+
 def _bundle_folder(tmp_path):
     bundle = tmp_path / "app" / "_internal" / "PySide6"
     bundle.mkdir(parents=True)
@@ -49,6 +56,50 @@ def test_removes_approved_items_and_leaves_neighbours(tmp_path, trimmer, capsys)
     assert (bundle / "QtWebEngineProcess.exe").exists()
     assert (bundle / "Qt6Quick.dll").exists()
     assert "Removed 6 approved item(s)." in capsys.readouterr().out
+
+
+def test_matching_version_trims_as_before(tmp_path, trimmer):
+    bundle = _bundle_folder(tmp_path)
+    approved = bundle / "assistant.exe"
+    neighbour = bundle / "QtWebEngineProcess.exe"
+    _write_file(approved)
+    _write_file(neighbour)
+
+    assert trimmer.trim_bundle(bundle.parents[1]) == 0
+
+    assert not approved.exists()
+    assert neighbour.exists()
+
+
+def test_refuses_different_pyside6_version_without_removing_items(
+    tmp_path, trimmer, monkeypatch, capsys
+):
+    bundle = _bundle_folder(tmp_path)
+    approved = bundle / "assistant.exe"
+    _write_file(approved)
+    monkeypatch.setattr(trimmer.metadata, "version", lambda _: "6.12.0")
+
+    assert trimmer.trim_bundle(bundle.parents[1]) == 1
+
+    assert approved.exists()
+    output = capsys.readouterr().out
+    assert "6.12.0" in output
+    assert trimmer.CHECKED_PYSIDE6_VERSION in output
+
+
+def test_refuses_when_pyside6_version_cannot_be_read(tmp_path, trimmer, monkeypatch):
+    bundle = _bundle_folder(tmp_path)
+    approved = bundle / "assistant.exe"
+    _write_file(approved)
+
+    def version_not_found(_):
+        raise trimmer.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(trimmer.metadata, "version", version_not_found)
+
+    assert trimmer.trim_bundle(bundle.parents[1]) == 1
+
+    assert approved.exists()
 
 
 def test_tolerates_already_absent_items(tmp_path, trimmer, capsys):

@@ -4,14 +4,20 @@ Removes GPL-only Qt components and Qt developer tools from _internal\\PySide6. A
 removes the PostgreSQL SQL driver plugin and the libraries it pulls in (LIBPQ and
 OpenSSL 3.5), which the app never uses. Python's own OpenSSL files are kept. Every
 removal path must resolve inside its anchored folder, and the script exits non-zero if
-a listed item is still present afterwards.
+a listed item is still present afterwards. Trimming is refused unless the installed
+PySide6 version matches the version against which the trim list and Qt licenses were checked.
 """
 
 from __future__ import annotations
 
 import argparse
 import shutil
+from importlib import metadata
 from pathlib import Path
+
+# The trim list and licenses/THIRD-PARTY-LICENSES-QT.txt and
+# licenses/THIRD-PARTY-LICENSES-CHROMIUM.txt were checked against this version.
+CHECKED_PYSIDE6_VERSION = "6.11.2"
 
 # Qt developer tools. QtWebEngineProcess.exe is intentionally not listed.
 DEVELOPER_TOOLS = (
@@ -198,6 +204,25 @@ def _trim_folder(
 
 def trim_bundle(app_folder: Path, target_folder: Path | None = None) -> int:
     """Remove approved paths and return zero only when none remain."""
+    try:
+        installed_version = metadata.version("PySide6")
+    except metadata.PackageNotFoundError:
+        print(
+            "ERROR: Installed PySide6 version could not be read; trim was refused "
+            f"because it was checked against PySide6 {CHECKED_PYSIDE6_VERSION}."
+        )
+        return 1
+    if installed_version != CHECKED_PYSIDE6_VERSION:
+        print(
+            f"ERROR: Installed PySide6 version is {installed_version}, but the trim was "
+            f"checked against {CHECKED_PYSIDE6_VERSION}. Re-check the trim list in "
+            "tools/trim_bundle.py and both Qt license files "
+            "(licenses/THIRD-PARTY-LICENSES-QT.txt, "
+            "licenses/THIRD-PARTY-LICENSES-CHROMIUM.txt) for the new version, then "
+            "update CHECKED_PYSIDE6_VERSION."
+        )
+        return 1
+
     try:
         bundle_folder = _resolve_bundle_folder(app_folder, target_folder)
         internal_folder = _resolve_internal_folder(app_folder)
