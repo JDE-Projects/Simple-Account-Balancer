@@ -64,12 +64,28 @@ MIN_WINDOW_H = 650
 # without it (balancer_YYYYMMDD_HHMMSS.db) still match, and still sort in time
 # order, since "." sorts before "_". The optional "prerestore_" is not its own
 # group, since both variants share the same trailing date/time. Listing,
-# pruning, and restore accept only names matching this exactly, so other files
-# in a shared backup folder are never shown or deleted. ASCII digits only, and
-# \Z rather than $ so a trailing newline can't slip through.
+# pruning, and restore accept only names passing _is_backup_filename, so other
+# files in a shared backup folder are never shown or deleted. ASCII digits
+# only, and \Z rather than $ so a trailing newline can't slip through.
 BACKUP_FILENAME_RE = re.compile(
     r"^balancer_(?:prerestore_)?([0-9]{8})_([0-9]{6})(?:_([0-9]{6}))?\.db\Z"
 )
+
+
+def _is_backup_filename(name: str) -> bool:
+    """True only for an exact BACKUP_FILENAME_RE name whose date and time are
+    real, so a name like balancer_00000000_000000.db is never listed,
+    restored, or pruned as the oldest backup."""
+    m = BACKUP_FILENAME_RE.match(name)
+    if not m:
+        return False
+    try:
+        datetime.datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S")
+    except ValueError:
+        return False
+    return True
+
+
 RESTORE_TEMP_FILENAME_RE = re.compile(
     r"^\.balancer_restore_(?:stage|rollback)_[A-Za-z0-9_]+\.db(?:-journal)?\Z"
 )
@@ -2087,7 +2103,7 @@ class Api:
         actually exists in the effective backup folder, is accepted. Guards
         against path traversal and against opening arbitrary files."""
         name = os.path.basename(str(filename or ""))
-        if not name or name != filename or not BACKUP_FILENAME_RE.match(name):
+        if not name or name != filename or not _is_backup_filename(name):
             return None, "That doesn't look like one of this app's backup files."
         backups_dir, _ = effective_backup_dir()
         full_path = os.path.join(backups_dir, name)
@@ -2208,7 +2224,7 @@ class Api:
                 names = []
             items = []
             for name in names:
-                if not BACKUP_FILENAME_RE.match(name):
+                if not _is_backup_filename(name):
                     continue
                 full_path = os.path.join(backups_dir, name)
                 items.append({
@@ -2541,7 +2557,7 @@ def _is_allowed_url(url) -> bool:
 
 
 def _list_backup_files(backups_dir: str, prerestore: bool) -> list:
-    """Exact backup filenames (BACKUP_FILENAME_RE) sorted oldest first, so
+    """Exact backup filenames (_is_backup_filename) sorted oldest first, so
     pruning never touches look-alike files. Regular backups exclude prerestore
     ones; the fixed-width timestamp makes lexical order match chronological
     order within each pool."""
@@ -2551,7 +2567,7 @@ def _list_backup_files(backups_dir: str, prerestore: bool) -> list:
         return []
     return sorted(
         n for n in names
-        if BACKUP_FILENAME_RE.match(n) and n.startswith("balancer_prerestore_") == prerestore
+        if _is_backup_filename(n) and n.startswith("balancer_prerestore_") == prerestore
     )
 
 

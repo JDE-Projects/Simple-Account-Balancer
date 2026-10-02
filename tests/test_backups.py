@@ -145,9 +145,54 @@ LOOK_ALIKES = [
     "balancer_prerestore_20240101_000000');alert(1);('.db",
 ]
 
+# Right shape, impossible date or time. All but the last two sort before every
+# real backup, so a shape-only check would prune them first.
+IMPOSSIBLE_DATES = [
+    "balancer_00000000_000000.db",
+    "balancer_20230230_000000.db",          # Feb 30
+    "balancer_20230001_000000.db",          # month 00
+    "balancer_20230100_000000_000001.db",   # day 00
+    "balancer_20230229_000000.db",          # Feb 29, not a leap year
+    "balancer_20231301_000000.db",          # month 13
+    "balancer_20230105_250000.db",          # hour 25
+    "balancer_20230106_006000.db",          # minute 60
+    "balancer_prerestore_00000000_000000.db",
+    "balancer_prerestore_20230230_000000_000001.db",
+]
+LOOK_ALIKES += IMPOSSIBLE_DATES
+
 
 def test_backup_filename_re_rejects_trailing_newline():
     assert not sab.BACKUP_FILENAME_RE.match("balancer_20240101_000000.db\n")
+
+
+def test_is_backup_filename_rejects_impossible_dates():
+    for n in IMPOSSIBLE_DATES:
+        assert not sab._is_backup_filename(n), n
+
+
+def test_is_backup_filename_accepts_real_dates():
+    for n in ["balancer_20240229_235959.db",            # leap day
+              "balancer_20240101_000000_000001.db",
+              "balancer_prerestore_19991231_120000.db"]:
+        assert sab._is_backup_filename(n), n
+
+
+def test_restore_refuses_impossible_date_names(tmp_path, monkeypatch):
+    # Each bad name is a real, restorable copy, so only the name check can
+    # stop it.
+    api, backups = _api_with_one_backup(tmp_path, monkeypatch)
+    for n in IMPOSSIBLE_DATES:
+        sab.shutil.copy2(backups / "balancer_20240101_000000.db", backups / n)
+    try:
+        for n in IMPOSSIBLE_DATES:
+            assert api.restore_backup(n) == {
+                "ok": False,
+                "error": "That doesn't look like one of this app's backup files.",
+            }, n
+    finally:
+        api.close_conn()
+    assert sorted(os.listdir(backups)) == sorted(IMPOSSIBLE_DATES + ["balancer_20240101_000000.db"])
 
 
 def test_list_backup_files_ignores_look_alikes(tmp_path):
