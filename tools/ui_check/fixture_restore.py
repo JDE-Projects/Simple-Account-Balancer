@@ -14,6 +14,7 @@ app_dir = os.environ["UI_DRIVE_APP_DIR"]
 sys.path.insert(0, app_dir)
 
 import simple_account_balancer as sab  # noqa: E402
+from app import config, db  # noqa: E402
 
 REAL = ["balancer_20260101_090000.db", "balancer_prerestore_20260102_090000.db"]
 LOOK_ALIKES = [
@@ -22,11 +23,11 @@ LOOK_ALIKES = [
     "balancer_20260103_090000');window.__pwned=1;('.db",
 ]
 
-db_path = os.path.join(app_dir, sab.DB_FILENAME)
-backups_dir = os.path.join(app_dir, sab.BACKUP_DIRNAME)
+db_path = os.path.join(app_dir, config.DB_FILENAME)
+backups_dir = os.path.join(app_dir, config.BACKUP_DIRNAME)
 os.makedirs(backups_dir, exist_ok=True)
 
-conn = sab.open_db(db_path)
+conn = db.open_db(db_path)
 api = sab.Api()
 api.set_conn(conn)
 api.set_db_path(db_path)

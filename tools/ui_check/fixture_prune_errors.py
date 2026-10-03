@@ -21,6 +21,7 @@ app_dir = os.environ["UI_DRIVE_APP_DIR"]
 sys.path.insert(0, app_dir)
 
 import simple_account_balancer as sab  # noqa: E402
+from app import config, db, prefs  # noqa: E402
 
 HOLD_S = 20
 TARGET = "balancer_prerestore_20260102_090000.db"
@@ -31,11 +32,11 @@ OLD_PRERESTORE = [
     "balancer_prerestore_20200103_000000.db",
 ]
 
-db_path = os.path.join(app_dir, sab.DB_FILENAME)
-backups_dir = os.path.join(app_dir, sab.BACKUP_DIRNAME)
+db_path = os.path.join(app_dir, config.DB_FILENAME)
+backups_dir = os.path.join(app_dir, config.BACKUP_DIRNAME)
 os.makedirs(backups_dir, exist_ok=True)
 
-conn = sab.open_db(db_path)
+conn = db.open_db(db_path)
 api = sab.Api()
 api.set_conn(conn)
 api.set_db_path(db_path)
@@ -44,9 +45,9 @@ api.add_transaction(cfg["account"]["id"], "2026-01-16", "Grocery store", "", "",
 conn.commit()
 conn.close()
 
-prefs = sab.load_prefs()
-prefs["backup_keep"] = 1
-if not sab.save_prefs(prefs):
+prefs_data = prefs.load_prefs()
+prefs_data["backup_keep"] = 1
+if not prefs.save_prefs(prefs_data):
     raise SystemExit("couldn't save prefs")
 
 for name in [TARGET, OLD_REGULAR, *OLD_PRERESTORE]:

@@ -2,7 +2,7 @@
 month-end/anchor-day traps advance_one_month exists to handle."""
 import pytest
 
-from simple_account_balancer import parse_iso_date, advance_one_month
+from app.utils import advance_one_month, parse_iso_date
 
 
 # --- parse_iso_date ----------------------------------------------------------

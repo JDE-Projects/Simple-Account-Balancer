@@ -13,17 +13,17 @@ sys.path.insert(0, app_dir)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import fixture_autopay  # noqa: E402
-import simple_account_balancer as sab  # noqa: E402
+from app import config  # noqa: E402
 
 if __name__ == "__main__":
     conn, facts = fixture_autopay.build()
     conn.close()
     prefs = {
         "active_account_id": facts["account_id"],
-        "window": {"x": 100, "y": 100, "width": sab.MIN_WINDOW_W, "height": sab.MIN_WINDOW_H},
+        "window": {"x": 100, "y": 100, "width": config.MIN_WINDOW_W, "height": config.MIN_WINDOW_H},
     }
     with open(os.path.join(app_dir, "simple_account_balancer.pref"), "w", encoding="utf-8") as f:
         json.dump(prefs, f)
-    print(json.dumps({**facts, "min_width": sab.MIN_WINDOW_W}), flush=True)
+    print(json.dumps({**facts, "min_width": config.MIN_WINDOW_W}), flush=True)
     while True:
         time.sleep(60)

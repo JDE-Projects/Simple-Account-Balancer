@@ -4,8 +4,8 @@ operations whose db change already succeeded must not be failed just because
 the pref write failed. All db access happens against a fresh sqlite file
 inside tmp_path; save_prefs itself is monkeypatched so no real .pref file
 needs to be involved."""
-import simple_account_balancer as sab
-from simple_account_balancer import Api, open_db
+from app import db, paths, prefs
+from simple_account_balancer import Api
 
 
 class _FakeWindow:
@@ -21,8 +21,8 @@ class _FakeWindow:
 def _make_api(tmp_path, monkeypatch):
     # Redirect app_dir so any accidental real pref read/write during a test
     # stays inside tmp_path rather than touching the repo's own .pref file.
-    monkeypatch.setattr(sab, "app_dir", lambda: str(tmp_path))
-    conn = open_db(str(tmp_path / "test.db"))
+    monkeypatch.setattr(paths, "app_dir", lambda: str(tmp_path))
+    conn = db.open_db(str(tmp_path / "test.db"))
     api = Api()
     api.set_conn(conn)
     api.set_db_path(str(tmp_path / "test.db"))
@@ -34,7 +34,7 @@ def _make_api(tmp_path, monkeypatch):
 def test_choose_backup_folder_reports_error_when_pref_write_fails(tmp_path, monkeypatch):
     api = _make_api(tmp_path, monkeypatch)
     api.set_window(_FakeWindow(str(tmp_path)))
-    monkeypatch.setattr(sab, "save_prefs", lambda prefs: False)
+    monkeypatch.setattr(prefs, "save_prefs", lambda prefs: False)
     result = api.choose_backup_folder()
     assert result["ok"] is False
     assert "error" in result
@@ -43,7 +43,7 @@ def test_choose_backup_folder_reports_error_when_pref_write_fails(tmp_path, monk
 def test_choose_backup_folder_succeeds_when_pref_write_succeeds(tmp_path, monkeypatch):
     api = _make_api(tmp_path, monkeypatch)
     api.set_window(_FakeWindow(str(tmp_path)))
-    monkeypatch.setattr(sab, "save_prefs", lambda prefs: True)
+    monkeypatch.setattr(prefs, "save_prefs", lambda prefs: True)
     result = api.choose_backup_folder()
     assert result["ok"] is True
     assert result["backup_folder"] == str(tmp_path)
@@ -51,7 +51,7 @@ def test_choose_backup_folder_succeeds_when_pref_write_succeeds(tmp_path, monkey
 
 def test_reset_backup_folder_reports_error_when_pref_write_fails(tmp_path, monkeypatch):
     api = _make_api(tmp_path, monkeypatch)
-    monkeypatch.setattr(sab, "save_prefs", lambda prefs: False)
+    monkeypatch.setattr(prefs, "save_prefs", lambda prefs: False)
     result = api.reset_backup_folder()
     assert result["ok"] is False
     assert "error" in result
@@ -59,7 +59,7 @@ def test_reset_backup_folder_reports_error_when_pref_write_fails(tmp_path, monke
 
 def test_reset_backup_folder_succeeds_when_pref_write_succeeds(tmp_path, monkeypatch):
     api = _make_api(tmp_path, monkeypatch)
-    monkeypatch.setattr(sab, "save_prefs", lambda prefs: True)
+    monkeypatch.setattr(prefs, "save_prefs", lambda prefs: True)
     result = api.reset_backup_folder()
     assert result["ok"] is True
     assert result["backup_folder_is_custom"] is False
@@ -67,7 +67,7 @@ def test_reset_backup_folder_succeeds_when_pref_write_succeeds(tmp_path, monkeyp
 
 def test_set_backup_keep_reports_error_when_pref_write_fails(tmp_path, monkeypatch):
     api = _make_api(tmp_path, monkeypatch)
-    monkeypatch.setattr(sab, "save_prefs", lambda prefs: False)
+    monkeypatch.setattr(prefs, "save_prefs", lambda prefs: False)
     result = api.set_backup_keep(10)
     assert result["ok"] is False
     assert "error" in result
@@ -75,7 +75,7 @@ def test_set_backup_keep_reports_error_when_pref_write_fails(tmp_path, monkeypat
 
 def test_set_backup_keep_succeeds_when_pref_write_succeeds(tmp_path, monkeypatch):
     api = _make_api(tmp_path, monkeypatch)
-    monkeypatch.setattr(sab, "save_prefs", lambda prefs: True)
+    monkeypatch.setattr(prefs, "save_prefs", lambda prefs: True)
     result = api.set_backup_keep(10)
     assert result["ok"] is True
     assert result["backup_keep"] == 10
@@ -85,7 +85,7 @@ def test_set_backup_keep_succeeds_when_pref_write_succeeds(tmp_path, monkeypatch
 
 def test_create_account_succeeds_even_if_pref_write_fails(tmp_path, monkeypatch):
     api = _make_api(tmp_path, monkeypatch)
-    monkeypatch.setattr(sab, "save_prefs", lambda prefs: False)
+    monkeypatch.setattr(prefs, "save_prefs", lambda prefs: False)
     result = api.create_account("Checking", "100.00", "2024-01-01")
     assert result["ok"] is True
     count = api._conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
@@ -100,7 +100,7 @@ def test_set_active_account_succeeds_even_if_pref_write_fails(tmp_path, monkeypa
     second = api.create_account("Savings", "50.00", "2024-01-01")
     second_id = next(a["id"] for a in second["accounts"] if a["name"] == "Savings")
 
-    monkeypatch.setattr(sab, "save_prefs", lambda prefs: False)
+    monkeypatch.setattr(prefs, "save_prefs", lambda prefs: False)
     result = api.set_active_account(second_id)
     assert result["ok"] is True
     assert result["account"]["id"] == second_id
@@ -114,7 +114,7 @@ def test_delete_account_succeeds_even_if_pref_write_fails(tmp_path, monkeypatch)
     second = api.create_account("Savings", "50.00", "2024-01-01")
     second_id = next(a["id"] for a in second["accounts"] if a["name"] == "Savings")
 
-    monkeypatch.setattr(sab, "save_prefs", lambda prefs: False)
+    monkeypatch.setattr(prefs, "save_prefs", lambda prefs: False)
     result = api.delete_account(second_id)
     assert result["ok"] is True
     remaining = api._conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]

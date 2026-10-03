@@ -4,13 +4,9 @@ import sqlite3
 
 import pytest
 
-from simple_account_balancer import (
-    Api,
-    NewerSchemaError,
-    SCHEMA_VERSION,
-    SEED_CATEGORIES,
-    open_db,
-)
+from app.config import SCHEMA_VERSION
+from app.db import NewerSchemaError, SEED_CATEGORIES, open_db
+from simple_account_balancer import Api
 
 
 def _api_with_estimated_transaction(tmp_path, amount_cents=-5000):

@@ -4,12 +4,9 @@ here touches a real backups/ folder."""
 import datetime
 import os
 
+from app import config, db as app_db, paths, prefs, utils
 import simple_account_balancer as sab
 from simple_account_balancer import (
-    BACKUP_KEEP,
-    BACKUP_KEEP_MIN,
-    BACKUP_KEEP_MAX,
-    PRERESTORE_KEEP,
     _clamp_backup_keep,
     _list_backup_files,
     _parse_backup_timestamp,
@@ -28,19 +25,19 @@ def test_clamp_backup_keep_within_bounds_unchanged():
 
 
 def test_clamp_backup_keep_floors_at_min():
-    assert _clamp_backup_keep(0) == BACKUP_KEEP_MIN
+    assert _clamp_backup_keep(0) == config.BACKUP_KEEP_MIN
 
 
 def test_clamp_backup_keep_ceils_at_max():
-    assert _clamp_backup_keep(100) == BACKUP_KEEP_MAX
+    assert _clamp_backup_keep(100) == config.BACKUP_KEEP_MAX
 
 
 def test_clamp_backup_keep_non_numeric_string_falls_back_to_default():
-    assert _clamp_backup_keep("abc") == BACKUP_KEEP
+    assert _clamp_backup_keep("abc") == config.BACKUP_KEEP
 
 
 def test_clamp_backup_keep_none_falls_back_to_default():
-    assert _clamp_backup_keep(None) == BACKUP_KEEP
+    assert _clamp_backup_keep(None) == config.BACKUP_KEEP
 
 
 # --- _parse_backup_timestamp ---------------------------------------------------
@@ -115,10 +112,10 @@ def test_prune_prerestore_backups_keeps_default_count(tmp_path):
     names = [f"balancer_prerestore_2024010{i}_000000.db" for i in range(1, 6)]  # 5 files
     for n in names:
         _touch(tmp_path, n)
-    _prune_prerestore_backups(str(tmp_path))  # default keep=PRERESTORE_KEEP
+    _prune_prerestore_backups(str(tmp_path))  # default keep=config.PRERESTORE_KEEP
     remaining = _list_backup_files(str(tmp_path), prerestore=True)
-    assert len(remaining) == PRERESTORE_KEEP
-    assert remaining == names[-PRERESTORE_KEEP:]
+    assert len(remaining) == config.PRERESTORE_KEEP
+    assert remaining == names[-config.PRERESTORE_KEEP:]
 
 
 # --- exact-name matching: look-alike files are never listed or pruned ------------
@@ -239,7 +236,7 @@ def test_run_backup_with_fallback_reports_failure_when_source_missing(tmp_path, 
     # No backup_folder pref is set (app_dir is redirected to an empty
     # tmp_path), so this exercises the default-folder path; the source db
     # simply doesn't exist, so the copy itself can't succeed either way.
-    monkeypatch.setattr(sab, "app_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(paths, "app_dir", lambda: str(tmp_path))
     missing_db = str(tmp_path / "does_not_exist.db")
     ok, used_fallback, actual_dir, prune_failed = _run_backup_with_fallback(missing_db)
     assert ok is False
@@ -312,7 +309,7 @@ def test_make_backup_never_overwrites_a_taken_name(tmp_path, monkeypatch):
 
 def test_new_backups_carry_microseconds(tmp_path):
     db = tmp_path / "live.db"
-    conn = sab.open_db(str(db))
+    conn = app_db.open_db(str(db))
     conn.close()
     backups = tmp_path / "backups"
     ok, _ = _make_backup(str(db), str(backups), keep=5)
@@ -380,9 +377,9 @@ def test_make_backup_passes_prune_failures_up(tmp_path, monkeypatch):
 
 
 def test_run_backup_with_fallback_passes_prune_failures_up(tmp_path, monkeypatch):
-    monkeypatch.setattr(sab, "app_dir", lambda: str(tmp_path))
-    monkeypatch.setattr(sab, "load_prefs", lambda: {"backup_keep": BACKUP_KEEP_MIN})
-    backups = tmp_path / sab.BACKUP_DIRNAME
+    monkeypatch.setattr(paths, "app_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(prefs, "load_prefs", lambda: {"backup_keep": config.BACKUP_KEEP_MIN})
+    backups = tmp_path / config.BACKUP_DIRNAME
     backups.mkdir()
     old = [f"balancer_2020010{i}_000000.db" for i in range(1, 4)]
     for n in old:
@@ -396,18 +393,18 @@ def test_run_backup_with_fallback_passes_prune_failures_up(tmp_path, monkeypatch
 
 
 def test_prune_failed_message_names_the_count():
-    assert "2 old backups." in sab._prune_failed_message(2)
-    assert "1 old backup." in sab._prune_failed_message(1)
+    assert "2 old backups." in utils._prune_failed_message(2)
+    assert "1 old backup." in utils._prune_failed_message(1)
 
 
 def _api_with_one_backup(tmp_path, monkeypatch):
-    monkeypatch.setattr(sab, "app_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(paths, "app_dir", lambda: str(tmp_path))
     backups = tmp_path / "backups"
     backups.mkdir()
     monkeypatch.setattr(sab, "effective_backup_dir", lambda: (str(backups), False))
     db_path = str(tmp_path / "live.db")
     api = sab.Api()
-    api.set_conn(sab.open_db(db_path))
+    api.set_conn(app_db.open_db(db_path))
     api.set_db_path(db_path)
     api.create_account("Checking", "100.00", "2024-01-01")
     api._conn.commit()

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from app import config, db
 import simple_account_balancer as sab
 
 
@@ -34,7 +35,7 @@ def _make_api(tmp_path, monkeypatch):
     monkeypatch.setattr(sab, "effective_backup_dir", lambda: (str(backups), False))
     db_path = str(tmp_path / "live.db")
     api = sab.Api()
-    api.set_conn(sab.open_db(db_path))
+    api.set_conn(db.open_db(db_path))
     api.set_db_path(db_path)
     _insert_account(api._conn, "Live")
     return api, db_path, backups
@@ -185,7 +186,7 @@ def test_restore_refuses_backup_missing_a_required_column(tmp_path, monkeypatch)
     backup_path = backups / BACKUP_NAME
     conn = sqlite3.connect(backup_path)
     conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
-    conn.execute(f"PRAGMA user_version = {sab.SCHEMA_VERSION}")
+    conn.execute(f"PRAGMA user_version = {config.SCHEMA_VERSION}")
     conn.commit()
     conn.close()
 
@@ -209,7 +210,7 @@ def test_restore_upgrades_each_older_schema_version(tmp_path, monkeypatch, versi
     assert _account_names(db_path) == [f"Version {version}"]
     conn = sqlite3.connect(db_path)
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == sab.SCHEMA_VERSION
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == config.SCHEMA_VERSION
     finally:
         conn.close()
     _assert_no_restore_temps(tmp_path)
@@ -220,7 +221,7 @@ def test_restore_refuses_version_three_backup_missing_sort_key(tmp_path, monkeyp
     api, db_path, backups = _make_api(tmp_path, monkeypatch)
     _make_versioned_backup(backups / BACKUP_NAME, 2)
     conn = sqlite3.connect(backups / BACKUP_NAME)
-    conn.execute(f"PRAGMA user_version = {sab.SCHEMA_VERSION}")
+    conn.execute(f"PRAGMA user_version = {config.SCHEMA_VERSION}")
     conn.commit()
     conn.close()
 
@@ -276,7 +277,7 @@ def test_restore_recovers_when_replace_fails(tmp_path, monkeypatch):
 def test_restore_rolls_back_when_reopen_after_replace_fails(tmp_path, monkeypatch):
     api, db_path, backups = _make_api(tmp_path, monkeypatch)
     _backup_with_account(api, backups)
-    real_open_db = sab.open_db
+    real_open_db = db.open_db
     failed = False
 
     def fail_once_after_replacement(path):
@@ -288,7 +289,7 @@ def test_restore_rolls_back_when_reopen_after_replace_fails(tmp_path, monkeypatc
             raise RuntimeError("reopen failed")
         return conn
 
-    monkeypatch.setattr(sab, "open_db", fail_once_after_replacement)
+    monkeypatch.setattr(db, "open_db", fail_once_after_replacement)
     result = api.restore_backup(BACKUP_NAME)
 
     assert result["ok"] is False
@@ -301,7 +302,7 @@ def test_restore_rolls_back_when_reopen_after_replace_fails(tmp_path, monkeypatc
 def test_restore_reports_manual_recovery_when_rollback_replace_fails(tmp_path, monkeypatch):
     api, db_path, backups = _make_api(tmp_path, monkeypatch)
     _backup_with_account(api, backups)
-    real_open_db = sab.open_db
+    real_open_db = db.open_db
     real_replace = sab.os.replace
     failed_open = False
 
@@ -319,7 +320,7 @@ def test_restore_reports_manual_recovery_when_rollback_replace_fails(tmp_path, m
             raise OSError("rollback replace failed")
         return real_replace(src, dst)
 
-    monkeypatch.setattr(sab, "open_db", fail_open_after_replacement)
+    monkeypatch.setattr(db, "open_db", fail_open_after_replacement)
     monkeypatch.setattr(sab.os, "replace", fail_rollback_replace)
     result = api.restore_backup(BACKUP_NAME)
 
@@ -333,14 +334,14 @@ def test_restore_reports_manual_recovery_when_rollback_replace_fails(tmp_path, m
 def test_restore_succeeds_with_warning_when_rollback_cleanup_fails(tmp_path, monkeypatch):
     api, db_path, backups = _make_api(tmp_path, monkeypatch)
     _backup_with_account(api, backups)
-    real_remove = sab._remove_db_artifacts
+    real_remove = db._remove_db_artifacts
 
     def fail_rollback_cleanup(path):
         if os.path.basename(path).startswith(".balancer_restore_rollback_"):
             return [f"{path}: locked"]
         return real_remove(path)
 
-    monkeypatch.setattr(sab, "_remove_db_artifacts", fail_rollback_cleanup)
+    monkeypatch.setattr(db, "_remove_db_artifacts", fail_rollback_cleanup)
     result = api.restore_backup(BACKUP_NAME)
 
     assert result["ok"] is True
@@ -352,14 +353,14 @@ def test_restore_succeeds_with_warning_when_rollback_cleanup_fails(tmp_path, mon
 def test_restore_shows_plain_error_when_staging_raises(tmp_path, monkeypatch):
     api, db_path, backups = _make_api(tmp_path, monkeypatch)
     _backup_with_account(api, backups)
-    real_open_db = sab.open_db
+    real_open_db = db.open_db
 
     def fail_on_stage(path):
         if os.path.basename(path).startswith(".balancer_restore_stage_"):
             raise sqlite3.OperationalError("disk I/O error at C:\\secret\\path")
         return real_open_db(path)
 
-    monkeypatch.setattr(sab, "open_db", fail_on_stage)
+    monkeypatch.setattr(db, "open_db", fail_on_stage)
     result = api.restore_backup(BACKUP_NAME)
 
     assert result["ok"] is False

@@ -3,6 +3,7 @@ import datetime
 
 import pytest
 
+from app import db
 import simple_account_balancer as sab
 
 POST_FAILURE_NOTICE = (
@@ -21,7 +22,7 @@ def _make_api(tmp_path, monkeypatch):
     monkeypatch.setattr(sab, "effective_backup_dir", lambda: (str(backups), False))
     db_path = str(tmp_path / "live.db")
     api = sab.Api()
-    api.set_conn(sab.open_db(db_path))
+    api.set_conn(db.open_db(db_path))
     api.set_db_path(db_path)
     api._conn.execute(
         "INSERT INTO accounts (name, starting_balance_cents, starting_date, created_at) "

@@ -1,7 +1,7 @@
 """Debug log redaction: no file paths or user-typed values reach the log."""
 import pytest
 
-import simple_account_balancer as sab
+from app import utils
 from test_rollback import _make_api
 
 
@@ -27,7 +27,7 @@ from test_rollback import _make_api
     ],
 )
 def test_redact_log_text_strips_paths_and_quoted_values(line, expected):
-    assert sab.redact_log_text(line) == expected
+    assert utils.redact_log_text(line) == expected
 
 
 @pytest.mark.parametrize(
@@ -41,7 +41,7 @@ def test_redact_log_text_strips_paths_and_quoted_values(line, expected):
     ],
 )
 def test_redact_log_text_keeps_plain_lines(line):
-    assert sab.redact_log_text(line) == line
+    assert utils.redact_log_text(line) == line
 
 
 def _debug_api(tmp_path, monkeypatch):

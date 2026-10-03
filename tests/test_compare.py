@@ -1,7 +1,8 @@
 """Focused coverage for the read-only Compare API."""
 import datetime
 
-from simple_account_balancer import Api, open_db
+from app.db import open_db
+from simple_account_balancer import Api
 
 
 def _api_with_transactions(tmp_path, transactions, starting_balance_cents=10_000):

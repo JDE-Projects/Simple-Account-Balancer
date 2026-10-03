@@ -4,7 +4,7 @@ these tests exist to prove no float drift and correct rounding at the edges.
 """
 import pytest
 
-from simple_account_balancer import parse_amount_to_cents, cents_to_decimal_str
+from app.utils import cents_to_decimal_str, parse_amount_to_cents
 
 
 # --- parse_amount_to_cents: happy path formats -----------------------------

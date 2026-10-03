@@ -13,7 +13,6 @@ backups (relocatable backup folder, in-app restore with a pre-restore
 safety copy) plus a schema version guard against databases written by a
 newer build.
 """
-import calendar
 import ctypes
 import ctypes.wintypes as wintypes
 import datetime
@@ -31,33 +30,20 @@ import ssl
 import sys
 import tempfile
 import threading
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
+from app import config, db, paths, platform_win, prefs, utils
 from app.debug_log import DebugLog
 
 import webview
 
 APP_VERSION = "1.9.2"
-GITHUB_OWNER = "JDE-Projects"
-GITHUB_REPO = "Simple-Account-Balancer"
 
-DB_FILENAME = "simple_account_balancer.db"
-BACKUP_DIRNAME = "backups"
-BACKUP_KEEP = 5
-BACKUP_KEEP_MIN = 1
-BACKUP_KEEP_MAX = 50
-PRERESTORE_KEEP = 3
-SCHEMA_VERSION = 3
-DEFAULT_RANGE_DAYS = 30
 
 # Enforced window minimum, read by create_window's min_size.
-MIN_WINDOW_W = 680
-MIN_WINDOW_H = 650
 
 # Regular backups: balancer_YYYYMMDD_HHMMSS_ffffff.db
 # Pre-restore safety backups: balancer_prerestore_YYYYMMDD_HHMMSS_ffffff.db
@@ -91,144 +77,25 @@ RESTORE_TEMP_FILENAME_RE = re.compile(
     r"^\.balancer_restore_(?:stage|rollback)_[A-Za-z0-9_]+\.db(?:-journal)?\Z"
 )
 
-SEED_CATEGORIES = [
-    "Auto", "Charity", "Dining", "Entertainment", "Fees", "Gas", "Gifts",
-    "Groceries", "Healthcare", "Home", "Income", "Insurance", "Personal",
-    "Rent/Mortgage", "Shopping", "Subscriptions", "Transfer", "Travel",
-    "Utilities",
-]
 
 # The minimum schema each historical user_version promised. Later additions
 # are optional for an older version, but must be complete if present.
-_SCHEMA_BASE_COLUMNS = {
-    "accounts": {
-        "id", "name", "starting_balance_cents", "starting_date", "created_at",
-    },
-    "transactions": {
-        "id", "account_id", "date", "payee", "category", "notes",
-        "amount_cents", "cleared", "created_at",
-    },
-    "categories": {"id", "name"},
-    "autopays": {
-        "id", "account_id", "payee", "category", "notes", "amount_cents",
-        "next_pay_date", "next_post_date", "pay_day", "post_day", "created_at",
-    },
-}
-_SCHEMA_REQUIRED_COLUMNS = {
-    0: {
-        "accounts": _SCHEMA_BASE_COLUMNS["accounts"],
-        "transactions": _SCHEMA_BASE_COLUMNS["transactions"],
-    },
-    1: {
-        "accounts": _SCHEMA_BASE_COLUMNS["accounts"]
-        | {"starting_balance_prev_cents", "starting_balance_changed_at"},
-        "transactions": _SCHEMA_BASE_COLUMNS["transactions"],
-        "categories": _SCHEMA_BASE_COLUMNS["categories"],
-    },
-    2: {
-        "accounts": _SCHEMA_BASE_COLUMNS["accounts"]
-        | {"starting_balance_prev_cents", "starting_balance_changed_at"},
-        "transactions": _SCHEMA_BASE_COLUMNS["transactions"] | {"estimated"},
-        "categories": _SCHEMA_BASE_COLUMNS["categories"],
-        "autopays": _SCHEMA_BASE_COLUMNS["autopays"] | {"is_variable"},
-    },
-    3: {
-        "accounts": _SCHEMA_BASE_COLUMNS["accounts"]
-        | {"starting_balance_prev_cents", "starting_balance_changed_at"},
-        "transactions": _SCHEMA_BASE_COLUMNS["transactions"] | {"estimated", "sort_key"},
-        "categories": _SCHEMA_BASE_COLUMNS["categories"],
-        "autopays": _SCHEMA_BASE_COLUMNS["autopays"] | {"is_variable"},
-    },
-}
 
 
-def resource_path(rel: str) -> str:
-    """Path to a bundled resource, working both from source and PyInstaller."""
-    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base, rel)
 
 
-def app_dir() -> str:
-    """Folder the app lives in: next to the .exe when frozen, else the script."""
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
 
 
 # ---------------------------------------------------------------------------
 # Money helpers. All amounts are integer cents in Python and SQLite. Never
 # floats. Display formatting ("$1,234.56") happens in the UI, not here.
 # ---------------------------------------------------------------------------
-def parse_amount_to_cents(raw, *, allow_negative=False, allow_zero=False):
-    """Parse a user-entered amount ('1,234.56', '$50', '12', '-40') to cents.
-
-    Returns (cents, None) on success or (None, error_message) on failure.
-    """
-    if raw is None:
-        return None, "Amount is required."
-    s = str(raw).strip()
-    if not s:
-        return None, "Amount is required."
-    neg = False
-    if s.startswith("-"):
-        neg = True
-        s = s[1:].strip()
-    elif s.startswith("+"):
-        s = s[1:].strip()
-    s = s.replace("$", "").replace(",", "").strip()
-    if not s:
-        return None, "Amount is required."
-    try:
-        value = Decimal(s)
-    except InvalidOperation:
-        return None, "Enter a valid amount."
-    if neg:
-        if not allow_negative:
-            return None, "Enter a valid amount."
-        value = -value
-    cents = int((value * 100).to_integral_value(rounding=ROUND_HALF_UP))
-    if not allow_negative and cents < 0:
-        return None, "Amount must be greater than zero."
-    if not allow_zero and cents == 0:
-        return None, "Amount must be greater than zero."
-    return cents, None
 
 
-def parse_iso_date(raw):
-    """Validate a yyyy-mm-dd date string. Returns (date_str, None) or (None, error)."""
-    s = (raw or "").strip()
-    try:
-        datetime.date.fromisoformat(s)
-    except ValueError:
-        return None, "Enter a valid date."
-    return s, None
 
 
-def advance_one_month(iso_date: str, anchor_day: int) -> str:
-    """Return iso_date advanced by one calendar month, re-anchored to
-    anchor_day and clamped to that month's length so a day-31 anchor still
-    lands somewhere sensible in short months, e.g. Jan 31 -> Feb 28 -> Mar 31,
-    with no drift back toward the 28th. Handles the December -> January
-    year rollover."""
-    d = datetime.date.fromisoformat(iso_date)
-    year = d.year
-    month = d.month + 1
-    if month > 12:
-        month = 1
-        year += 1
-    last_day = calendar.monthrange(year, month)[1]
-    day = min(anchor_day, last_day)
-    return datetime.date(year, month, day).isoformat()
 
 
-def cents_to_decimal_str(cents: int) -> str:
-    """Format integer cents as a plain unrounded decimal string for CSV export,
-    e.g. -140 -> '-1.40', 500 -> '5.00'. Never uses float, so it never drifts."""
-    neg = cents < 0
-    cents = abs(cents)
-    dollars, rem = divmod(cents, 100)
-    s = f"{dollars}.{rem:02d}"
-    return f"-{s}" if neg else s
 
 
 # Excel and other spreadsheets treat a cell starting with one of these as a
@@ -257,9 +124,9 @@ def csv_export_rows(account_name, range_text, export_date, rows) -> list:
         ["Date", "Payee / Description", "Category", "Notes", "Withdraw", "Deposit", "Balance"],
     ]
     for r in rows:
-        withdraw = cents_to_decimal_str(-r["amount_cents"]) if r["amount_cents"] < 0 else ""
-        deposit = cents_to_decimal_str(r["amount_cents"]) if r["amount_cents"] > 0 else ""
-        balance = cents_to_decimal_str(r["balance_cents"])
+        withdraw = utils.cents_to_decimal_str(-r["amount_cents"]) if r["amount_cents"] < 0 else ""
+        deposit = utils.cents_to_decimal_str(r["amount_cents"]) if r["amount_cents"] > 0 else ""
+        balance = utils.cents_to_decimal_str(r["balance_cents"])
         out.append([
             csv_safe_text(r["date"]),
             csv_safe_text(r["payee"]),
@@ -272,37 +139,17 @@ def csv_export_rows(account_name, range_text, export_date, rows) -> list:
     return out
 
 
-_INVALID_FILENAME_CHARS = '<>:"/\\|?*'
 
 
-def sanitize_filename(name: str) -> str:
-    """Strip characters that Windows doesn't allow in file names."""
-    cleaned = "".join(c for c in name if c not in _INVALID_FILENAME_CHARS)
-    return cleaned.strip()
 
 
 # Quoted text in a log line, as Python's error messages print file names and
 # rejected values. The quote must not follow a letter or digit, so the
 # apostrophe in words like "couldn't" never opens a match.
-_LOG_QUOTED_RE = re.compile(r"""(?<![\w])(['"])(.*?)\1""")
 # An unquoted file path runs to the end of the line: a drive path (C:\ or C:/)
 # or a network path (\\server or //server, but not the // in https://).
-_LOG_BARE_PATH_RE = re.compile(r"""(?:\b[A-Za-z]:[\\/]|(?<![\w:])[\\/]{2}[^\\/\s]).*""")
 
 
-def redact_log_text(text: str) -> str:
-    """Strip private details from a debug log line. File paths (which carry
-    the Windows username, share names, and export file names that contain
-    the account name) become <path>; other quoted text inside error messages,
-    which can be a value the user typed, becomes <text>. Ids, dates, counts,
-    and plain messages are kept."""
-    def _quoted(m):
-        quote, inner = m.group(1), m.group(2)
-        kind = "<path>" if ("\\" in inner or "/" in inner) else "<text>"
-        return f"{quote}{kind}{quote}"
-
-    text = _LOG_QUOTED_RE.sub(_quoted, str(text))
-    return _LOG_BARE_PATH_RE.sub("<path>", text)
 
 
 # ---------------------------------------------------------------------------
@@ -310,27 +157,10 @@ def redact_log_text(text: str) -> str:
 # Module-level so main() can read it before any Api/window exists (needed for
 # the relocatable backup folder at startup).
 # ---------------------------------------------------------------------------
-def _pref_path() -> str:
-    return os.path.join(app_dir(), "simple_account_balancer.pref")
 
 
-def load_prefs() -> dict:
-    """Load the full prefs dict. Tolerant of a missing or corrupt file."""
-    try:
-        with open(_pref_path(), "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
 
 
-def save_prefs(prefs: dict) -> bool:
-    try:
-        with open(_pref_path(), "w", encoding="utf-8") as f:
-            json.dump(prefs, f)
-        return True
-    except Exception:
-        return False
 
 
 # Save and restore the ABSOLUTE window frame rectangle via Win32, found by the
@@ -342,388 +172,48 @@ def save_prefs(prefs: dict) -> bool:
 # those pre-show and relative to the primary screen, so the window lands on
 # the wrong monitor, drifts down by the title-bar height each launch, and
 # slides sideways at non-100% scaling.
-def _win32():
-    u = ctypes.windll.user32
-    u.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
-    u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
-                               ctypes.c_int, ctypes.c_int, wintypes.UINT]
-    return u
 
 
-class _MONITORINFO(ctypes.Structure):
-    _fields_ = [
-        ("cbSize", wintypes.DWORD),
-        ("rcMonitor", wintypes.RECT),
-        ("rcWork", wintypes.RECT),
-        ("dwFlags", wintypes.DWORD),
-    ]
 
 
-def _monitor_work_area(hmonitor):
-    """Return hmonitor's work area as (left, top, right, bottom), or None."""
-    user32 = ctypes.windll.user32
-    user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(_MONITORINFO)]
-    user32.GetMonitorInfoW.restype = wintypes.BOOL
-    info = _MONITORINFO()
-    info.cbSize = ctypes.sizeof(info)
-    if not user32.GetMonitorInfoW(hmonitor, ctypes.byref(info)):
-        return None
-    work = info.rcWork
-    return work.left, work.top, work.right, work.bottom
 
 
-def _frame_insets(hwnd):
-    """Return DWM frame insets for hwnd, or zero insets when unavailable."""
-    try:
-        frame = wintypes.RECT()
-        if not _win32().GetWindowRect(hwnd, ctypes.byref(frame)):
-            return 0, 0, 0, 0
-        extended = wintypes.RECT()
-        dwmapi = ctypes.windll.dwmapi
-        dwmapi.DwmGetWindowAttribute.argtypes = [
-            wintypes.HWND, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
-        ]
-        dwmapi.DwmGetWindowAttribute.restype = ctypes.c_long
-        DWMWA_EXTENDED_FRAME_BOUNDS = 9
-        if dwmapi.DwmGetWindowAttribute(
-            hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(extended), ctypes.sizeof(extended)
-        ) != 0:
-            return 0, 0, 0, 0
-        return (
-            max(0, extended.left - frame.left),
-            max(0, extended.top - frame.top),
-            max(0, frame.right - extended.right),
-            max(0, frame.bottom - extended.bottom),
-        )
-    except Exception:
-        return 0, 0, 0, 0
 
 
-def fit_rect_to_work_area(x, y, w, h, work, insets):
-    """Fit a frame rect so its DWM-visible rect remains in a monitor work area."""
-    left, top, right, bottom = work
-    inset_left, inset_top, inset_right, inset_bottom = insets
-    visible_x = x + inset_left
-    visible_y = y + inset_top
-    visible_w = min(max(0, w - inset_left - inset_right), right - left)
-    visible_h = min(max(0, h - inset_top - inset_bottom), bottom - top)
-
-    if visible_x + visible_w > right:
-        visible_x = right - visible_w
-    if visible_y + visible_h > bottom:
-        visible_y = bottom - visible_h
-    if visible_x < left:
-        visible_x = left
-    if visible_y < top:
-        visible_y = top
-    return (
-        visible_x - inset_left,
-        visible_y - inset_top,
-        visible_w + inset_left + inset_right,
-        visible_h + inset_top + inset_bottom,
-    )
 
 
-def _own_window_handle(title):
-    """HWND of our own top-level window with this title.
-
-    FindWindowW matches by title across the whole desktop, so with a second
-    instance open it can return the other copy's window. Enumerate instead and
-    keep only a window owned by this process.
-    """
-    try:
-        u = ctypes.windll.user32
-        WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-        u.EnumWindows.argtypes = [WNDENUMPROC, wintypes.LPARAM]
-        u.EnumWindows.restype = wintypes.BOOL
-        u.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
-        u.GetWindowThreadProcessId.restype = wintypes.DWORD
-        u.GetWindowTextLengthW.argtypes = [wintypes.HWND]
-        u.GetWindowTextLengthW.restype = ctypes.c_int
-        u.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
-        u.GetWindowTextW.restype = ctypes.c_int
-        u.IsWindowVisible.argtypes = [wintypes.HWND]
-        u.IsWindowVisible.restype = wintypes.BOOL
-
-        own_pid = os.getpid()
-        found = {"hwnd": None}
-
-        def _callback(hwnd, lparam):
-            if not u.IsWindowVisible(hwnd):
-                return True
-            pid = wintypes.DWORD()
-            u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            if pid.value != own_pid:
-                return True
-            length = u.GetWindowTextLengthW(hwnd)
-            if length <= 0:
-                return True
-            buf = ctypes.create_unicode_buffer(length + 1)
-            u.GetWindowTextW(hwnd, buf, length + 1)
-            if buf.value != title:
-                return True
-            found["hwnd"] = hwnd
-            return False   # stop enumerating, we found it
-
-        proc = WNDENUMPROC(_callback)   # kept alive for the duration of the call below
-        u.EnumWindows(proc, 0)
-        return found["hwnd"]
-    except Exception:
-        return None
 
 
-def _save_geometry(win) -> None:
-    """Save the absolute frame rect (physical px) via Win32. Wired to
-    `closing`. Guarded end-to-end so a failure here can never interfere with
-    closing the app."""
-    try:
-        u = _win32()
-        hwnd = _own_window_handle(win.title)
-        if not hwnd:
-            return
-        r = wintypes.RECT()
-        if not u.GetWindowRect(hwnd, ctypes.byref(r)):
-            return
-        x, y, w, h = r.left, r.top, r.right - r.left, r.bottom - r.top
-        # A minimized window reports a position around -32000; don't save
-        # that as if it were the user's chosen spot.
-        if x <= -30000 or y <= -30000:
-            return
-        if w <= 0 or h <= 0:
-            return
-        prefs = load_prefs()
-        prefs["window"] = {"x": x, "y": y, "width": w, "height": h}
-        save_prefs(prefs)
-    except Exception:
-        pass
 
 
-def _restore_geometry(win) -> None:
-    """Restore the saved frame rect via Win32, fitted to its monitor's work
-    area. Wired to `shown` after the OS window exists; never raises."""
-    try:
-        geo = load_prefs().get("window")
-        if not isinstance(geo, dict):
-            return
-        x, y, w, h = geo.get("x"), geo.get("y"), geo.get("width"), geo.get("height")
-        for v in (x, y, w, h):
-            if not isinstance(v, int) or isinstance(v, bool):
-                return
-        if w <= 0 or h <= 0:
-            return
-        # Confirm a point inside the title bar area is still on a connected
-        # monitor; MonitorFromPoint returns NULL if it isn't (for example the
-        # saved monitor has been unplugged since the last launch).
-        point = wintypes.POINT(x + 100, y + 30)
-        user32 = ctypes.windll.user32
-        user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
-        user32.MonitorFromPoint.restype = wintypes.HMONITOR
-        MONITOR_DEFAULTTONULL = 0
-        hmonitor = user32.MonitorFromPoint(point, MONITOR_DEFAULTTONULL)
-        if not hmonitor:
-            return
-        work = _monitor_work_area(hmonitor)
-        if work is None:
-            return
-        u = _win32()
-        hwnd = _own_window_handle(win.title)
-        if not hwnd:
-            return
-        SWP_NOZORDER, SWP_NOACTIVATE = 0x0004, 0x0010
-        rect = fit_rect_to_work_area(x, y, w, h, work, _frame_insets(hwnd))
-        u.SetWindowPos(hwnd, None, *rect, SWP_NOZORDER | SWP_NOACTIVATE)
-
-        # pywebview runs `shown` callbacks on a worker thread, so this delay
-        # does not block Qt while it finishes any DPI-driven resize.
-        time.sleep(0.3)
-        current = wintypes.RECT()
-        if not u.GetWindowRect(hwnd, ctypes.byref(current)):
-            return
-        user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
-        user32.MonitorFromWindow.restype = wintypes.HMONITOR
-        MONITOR_DEFAULTTONEAREST = 2
-        hmonitor = user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
-        if not hmonitor:
-            return
-        work = _monitor_work_area(hmonitor)
-        if work is None:
-            return
-        current_rect = (
-            current.left, current.top, current.right - current.left, current.bottom - current.top,
-        )
-        fitted_rect = fit_rect_to_work_area(*current_rect, work, _frame_insets(hwnd))
-        if fitted_rect != current_rect:
-            u.SetWindowPos(hwnd, None, *fitted_rect, SWP_NOZORDER | SWP_NOACTIVATE)
-    except Exception:
-        pass
 
 
 # ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
-class NewerSchemaError(Exception):
-    """Raised by open_db when the database's PRAGMA user_version is higher
-    than this build's SCHEMA_VERSION. The database is never touched in this
-    case; the caller should tell the user to update the app."""
 
 
-def open_db(path: str) -> sqlite3.Connection:
-    """Open (creating if missing) the SQLite database and ensure the schema.
-    Refuses to touch a database stamped with a schema newer than this build
-    understands; see NewerSchemaError."""
-    conn = sqlite3.connect(path, check_same_thread=False, isolation_level="")
-    try:
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-
-        existing_version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if existing_version > SCHEMA_VERSION:
-            raise NewerSchemaError(
-                f"Database schema {existing_version} is newer than this app supports ({SCHEMA_VERSION})."
-            )
-
-        # Check before creating so we only seed categories the first time this
-        # table shows up (a fresh database, or one upgraded from a version
-        # without categories); later runs must never re-add categories the
-        # user deliberately deleted.
-        existing = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='categories'"
-        ).fetchone()
-        categories_is_new = existing is None
-
-        conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS accounts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            starting_balance_cents INTEGER NOT NULL,
-            starting_date TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            account_id INTEGER NOT NULL REFERENCES accounts(id),
-            date TEXT NOT NULL,
-            payee TEXT NOT NULL,
-            category TEXT NOT NULL DEFAULT '',
-            notes TEXT NOT NULL DEFAULT '',
-            amount_cents INTEGER NOT NULL,
-            cleared INTEGER NOT NULL DEFAULT 0,
-            estimated INTEGER NOT NULL DEFAULT 0,
-            sort_key INTEGER,
-            created_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS categories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE COLLATE NOCASE
-        );
-        CREATE TABLE IF NOT EXISTS autopays (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            account_id INTEGER NOT NULL REFERENCES accounts(id),
-            payee TEXT NOT NULL,
-            category TEXT NOT NULL DEFAULT '',
-            notes TEXT NOT NULL DEFAULT '',
-            amount_cents INTEGER NOT NULL,
-            next_pay_date TEXT NOT NULL,
-            next_post_date TEXT NOT NULL,
-            pay_day INTEGER NOT NULL,
-            post_day INTEGER NOT NULL,
-            is_variable INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL
-        );
-        """
-        )
-        if categories_is_new:
-            conn.executemany(
-                "INSERT OR IGNORE INTO categories (name) VALUES (?)",
-                [(c,) for c in SEED_CATEGORIES],
-            )
-
-        # Migration for databases created before the starting-balance change note:
-        # remember the previous amount and when it was last edited.
-        account_cols = {r["name"] for r in conn.execute("PRAGMA table_info(accounts)")}
-        if "starting_balance_prev_cents" not in account_cols:
-            conn.execute("ALTER TABLE accounts ADD COLUMN starting_balance_prev_cents INTEGER")
-            conn.execute("ALTER TABLE accounts ADD COLUMN starting_balance_changed_at TEXT")
-
-        # Migration for variable autopays: transactions posted from a rule marked
-        # "variable" arrive flagged as an estimate the user later confirms.
-        transaction_cols = {r["name"] for r in conn.execute("PRAGMA table_info(transactions)")}
-        if "estimated" not in transaction_cols:
-            conn.execute("ALTER TABLE transactions ADD COLUMN estimated INTEGER NOT NULL DEFAULT 0")
-
-        # Migration for day-scoped reordering: sort_key breaks ties within a day
-        # for transactions that share a date. Backfilled from id so existing rows
-        # keep their current insertion-order position until the user reorders them.
-        if "sort_key" not in transaction_cols:
-            conn.execute("ALTER TABLE transactions ADD COLUMN sort_key INTEGER")
-        conn.execute("UPDATE transactions SET sort_key = id WHERE sort_key IS NULL")
-
-        autopay_cols = {r["name"] for r in conn.execute("PRAGMA table_info(autopays)")}
-        if "is_variable" not in autopay_cols:
-            conn.execute("ALTER TABLE autopays ADD COLUMN is_variable INTEGER NOT NULL DEFAULT 0")
-
-        # Standing rule: migrations in this function must stay additive-only (new
-        # tables/columns guarded by an existence check, never a destructive
-        # rewrite), so any older backup file can always be opened and upgraded
-        # in place by restore_backup.
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        conn.commit()
-        return conn
-    except Exception:
-        try:
-            conn.close()
-        except Exception:
-            pass
-        raise
 
 
-def _readonly_connection(path: str) -> sqlite3.Connection:
-    uri = "file:" + urllib.parse.quote(path.replace("\\", "/")) + "?mode=ro"
-    conn = sqlite3.connect(uri, uri=True)
-    conn.row_factory = sqlite3.Row
-    return conn
 
 
-def _schema_contract_error(conn: sqlite3.Connection, version: int) -> str | None:
-    required = _SCHEMA_REQUIRED_COLUMNS.get(version)
-    if required is None:
-        return "That backup file has an unsupported schema version."
-    tables = {
-        row["name"]
-        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    }
-    for table, columns in required.items():
-        if table not in tables:
-            return f"That backup is missing its required {table} table."
-        actual = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
-        missing = sorted(columns - actual)
-        if missing:
-            return f"That backup is missing required column {table}.{missing[0]}."
-    for table, columns in _SCHEMA_BASE_COLUMNS.items():
-        if table in tables:
-            actual = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
-            missing = sorted(columns - actual)
-            if missing:
-                return f"That backup has an incomplete {table} table (missing {missing[0]})."
-    return None
 
 
 def _check_backup(path: str) -> str | None:
     """Return a plain-English reason when a backup is unsafe to restore."""
     conn = None
     try:
-        conn = _readonly_connection(path)
+        conn = db._readonly_connection(path)
         integrity = conn.execute("PRAGMA integrity_check").fetchall()
         if len(integrity) != 1 or integrity[0][0] != "ok":
             return "That backup file is corrupt or unreadable."
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if version > SCHEMA_VERSION:
+        if version > config.SCHEMA_VERSION:
             return (
                 "That backup was made by a newer version of Simple Account Balancer. "
                 "Update the app to restore it."
             )
-        schema_error = _schema_contract_error(conn, version)
+        schema_error = db._schema_contract_error(conn, version)
         if schema_error:
             return schema_error
         if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
@@ -739,17 +229,6 @@ def _check_backup(path: str) -> str | None:
                 pass
 
 
-def _remove_db_artifacts(path: str) -> list:
-    """Remove a temporary database and its rollback journal, if present."""
-    failures = []
-    for candidate in (path, path + "-journal"):
-        try:
-            os.remove(candidate)
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            failures.append(f"{candidate}: {e}")
-    return failures
 
 
 def _remove_stale_restore_files(db_dir: str) -> tuple:
@@ -800,21 +279,21 @@ def _stage_backup(full_path: str, db_dir: str) -> tuple:
         )
         os.close(fd)
         shutil.copy2(full_path, staged_path)
-        conn = open_db(staged_path)
+        conn = db.open_db(staged_path)
         conn.close()
         error = _check_backup(staged_path)
         if error:
             raise RuntimeError(error)
-        conn = _readonly_connection(staged_path)
+        conn = db._readonly_connection(staged_path)
         try:
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version != SCHEMA_VERSION:
+            if version != config.SCHEMA_VERSION:
                 raise RuntimeError("The staged backup did not reach the current schema.")
         finally:
             conn.close()
         return staged_path, None, None
     except Exception as e:
-        cleanup_failures = _remove_db_artifacts(staged_path) if staged_path else []
+        cleanup_failures = db._remove_db_artifacts(staged_path) if staged_path else []
         detail = f"{type(e).__name__}: {e}"
         if cleanup_failures:
             detail += " (couldn't clean up the failed staged backup)"
@@ -841,7 +320,7 @@ def _make_rollback_copy(conn: sqlite3.Connection, db_dir: str) -> tuple:
             except Exception:
                 pass
         if rollback_path:
-            _remove_db_artifacts(rollback_path)
+            db._remove_db_artifacts(rollback_path)
         return None, str(e) or "Couldn't prepare the local rollback copy."
 
 
@@ -973,8 +452,8 @@ class Api:
         self._database_failed = False
         self._db_path = None
         self._debug_log = DebugLog(
-            app_dir(), "Simple Account Balancer",
-            redact=redact_log_text, on_warning=self._on_debug_log_warning,
+            paths.app_dir(), "Simple Account Balancer",
+            redact=utils.redact_log_text, on_warning=self._on_debug_log_warning,
         )
         self.backup_notice = None
         self.autopay_notice = None
@@ -1057,8 +536,8 @@ class Api:
             ).fetchall()
             accounts = [{"id": r["id"], "name": r["name"]} for r in account_rows]
 
-            prefs = load_prefs()
-            active_id = prefs.get("active_account_id")
+            prefs_data = prefs.load_prefs()
+            active_id = prefs_data.get("active_account_id")
             account = None
             if accounts:
                 if active_id is not None:
@@ -1077,7 +556,7 @@ class Api:
                 "accounts": accounts,
                 "backup_folder": backup_dir,
                 "backup_folder_is_custom": backup_is_custom,
-                "backup_keep": _clamp_backup_keep(prefs.get("backup_keep")),
+                "backup_keep": _clamp_backup_keep(prefs_data.get("backup_keep")),
                 "backup_notice": self.backup_notice,
                 "autopay_notice": self.autopay_notice,
                 "autopay_notice_is_error": self.autopay_notice_is_error,
@@ -1093,10 +572,10 @@ class Api:
         the active one."""
         try:
             name_s = (name or "").strip() or "Checking"
-            cents, err = parse_amount_to_cents(starting_balance, allow_negative=True, allow_zero=True)
+            cents, err = utils.parse_amount_to_cents(starting_balance, allow_negative=True, allow_zero=True)
             if err:
                 return {"ok": False, "error": err}
-            date_s, err = parse_iso_date(starting_date)
+            date_s, err = utils.parse_iso_date(starting_date)
             if err:
                 return {"ok": False, "error": err}
             now = datetime.datetime.now().isoformat(timespec="seconds")
@@ -1108,9 +587,9 @@ class Api:
             )
             new_id = cur.lastrowid
             self._conn.commit()
-            prefs = load_prefs()
-            prefs["active_account_id"] = new_id
-            if not save_prefs(prefs):
+            prefs_data = prefs.load_prefs()
+            prefs_data["active_account_id"] = new_id
+            if not prefs.save_prefs(prefs_data):
                 self.log("Could not save active account pref")
             self.log(f"Account {new_id} created, starting as of {date_s}")
             return self.get_config()
@@ -1125,9 +604,9 @@ class Api:
             account = self._get_account(account_id)
             if account is None:
                 return {"ok": False, "error": "That account no longer exists."}
-            prefs = load_prefs()
-            prefs["active_account_id"] = account["id"]
-            if not save_prefs(prefs):
+            prefs_data = prefs.load_prefs()
+            prefs_data["active_account_id"] = account["id"]
+            if not prefs.save_prefs(prefs_data):
                 self.log("Could not save active account pref")
             self.log(f"Active account set to {account['id']}")
             return self.get_config()
@@ -1155,13 +634,13 @@ class Api:
             cur.execute("DELETE FROM autopays WHERE account_id=?", (account["id"],))
             cur.execute("DELETE FROM accounts WHERE id=?", (account["id"],))
             self._conn.commit()
-            prefs = load_prefs()
-            if prefs.get("active_account_id") == account["id"]:
+            prefs_data = prefs.load_prefs()
+            if prefs_data.get("active_account_id") == account["id"]:
                 remaining = cur.execute(
                     "SELECT id FROM accounts ORDER BY name COLLATE NOCASE LIMIT 1"
                 ).fetchone()
-                prefs["active_account_id"] = remaining["id"] if remaining else None
-                if not save_prefs(prefs):
+                prefs_data["active_account_id"] = remaining["id"] if remaining else None
+                if not prefs.save_prefs(prefs_data):
                     self.log("Could not save active account pref")
             self.log(f"Account {account['id']} deleted ({tx_count} transactions removed)")
             return self.get_config()
@@ -1179,10 +658,10 @@ class Api:
             name_s = (name or "").strip()
             if not name_s:
                 return {"ok": False, "error": "Account name is required."}
-            cents, err = parse_amount_to_cents(starting_balance, allow_negative=True, allow_zero=True)
+            cents, err = utils.parse_amount_to_cents(starting_balance, allow_negative=True, allow_zero=True)
             if err:
                 return {"ok": False, "error": err}
-            date_s, err = parse_iso_date(starting_date)
+            date_s, err = utils.parse_iso_date(starting_date)
             if err:
                 return {"ok": False, "error": err}
             cur = self._conn.cursor()
@@ -1402,7 +881,7 @@ class Api:
 
             from_s = (from_date or "").strip()
             if not from_s:
-                from_s = (datetime.date.today() - datetime.timedelta(days=DEFAULT_RANGE_DAYS)).isoformat()
+                from_s = (datetime.date.today() - datetime.timedelta(days=config.DEFAULT_RANGE_DAYS)).isoformat()
             to_s = (to_date or "").strip()
 
             visible = [row for row in computed if row["date"] >= from_s]
@@ -1448,7 +927,7 @@ class Api:
             account = self._get_account(account_id)
             if account is None:
                 return {"ok": False, "error": "No account exists yet."}
-            date_s, err = parse_iso_date(date)
+            date_s, err = utils.parse_iso_date(date)
             if err:
                 return {"ok": False, "error": err}
             payee_s = (payee or "").strip()
@@ -1456,7 +935,7 @@ class Api:
                 return {"ok": False, "error": "Payee / description is required."}
             if direction not in ("withdraw", "deposit"):
                 return {"ok": False, "error": "Choose withdraw or deposit."}
-            cents, err = parse_amount_to_cents(amount, allow_negative=False, allow_zero=False)
+            cents, err = utils.parse_amount_to_cents(amount, allow_negative=False, allow_zero=False)
             if err:
                 return {"ok": False, "error": err}
             signed = -cents if direction == "withdraw" else cents
@@ -1490,7 +969,7 @@ class Api:
             row = cur.execute("SELECT id, date FROM transactions WHERE id=?", (transaction_id,)).fetchone()
             if row is None:
                 return {"ok": False, "error": "That transaction no longer exists."}
-            date_s, err = parse_iso_date(date)
+            date_s, err = utils.parse_iso_date(date)
             if err:
                 return {"ok": False, "error": err}
             payee_s = (payee or "").strip()
@@ -1498,7 +977,7 @@ class Api:
                 return {"ok": False, "error": "Payee / description is required."}
             if direction not in ("withdraw", "deposit"):
                 return {"ok": False, "error": "Choose withdraw or deposit."}
-            cents, err = parse_amount_to_cents(amount, allow_negative=False, allow_zero=False)
+            cents, err = utils.parse_amount_to_cents(amount, allow_negative=False, allow_zero=False)
             if err:
                 return {"ok": False, "error": err}
             signed = -cents if direction == "withdraw" else cents
@@ -1557,7 +1036,7 @@ class Api:
             account = self._get_account(account_id)
             if account is None:
                 return {"ok": False, "error": "No account exists yet."}
-            date_s, err = parse_iso_date(date)
+            date_s, err = utils.parse_iso_date(date)
             if err:
                 return {"ok": False, "error": err}
             cur = self._conn.cursor()
@@ -1596,7 +1075,7 @@ class Api:
             row = cur.execute("SELECT * FROM transactions WHERE id=?", (transaction_id,)).fetchone()
             if row is None:
                 return {"ok": False, "error": "That transaction no longer exists."}
-            cents, err = parse_amount_to_cents(amount, allow_negative=False, allow_zero=False)
+            cents, err = utils.parse_amount_to_cents(amount, allow_negative=False, allow_zero=False)
             if err:
                 return {"ok": False, "error": err}
             signed = -cents if row["amount_cents"] < 0 else cents
@@ -1664,13 +1143,13 @@ class Api:
                 return {"ok": False, "error": "Payee / description is required."}
             if direction not in ("withdraw", "deposit"):
                 return {"ok": False, "error": "Choose withdraw or deposit."}
-            cents, err = parse_amount_to_cents(amount, allow_negative=False, allow_zero=False)
+            cents, err = utils.parse_amount_to_cents(amount, allow_negative=False, allow_zero=False)
             if err:
                 return {"ok": False, "error": err}
-            post_s, err = parse_iso_date(post_date)
+            post_s, err = utils.parse_iso_date(post_date)
             if err:
                 return {"ok": False, "error": err}
-            pay_s, err = parse_iso_date(pay_date)
+            pay_s, err = utils.parse_iso_date(pay_date)
             if err:
                 return {"ok": False, "error": err}
             if post_s > pay_s:
@@ -1737,13 +1216,13 @@ class Api:
                 return {"ok": False, "error": "Payee / description is required."}
             if direction not in ("withdraw", "deposit"):
                 return {"ok": False, "error": "Choose withdraw or deposit."}
-            cents, err = parse_amount_to_cents(amount, allow_negative=False, allow_zero=False)
+            cents, err = utils.parse_amount_to_cents(amount, allow_negative=False, allow_zero=False)
             if err:
                 return {"ok": False, "error": err}
-            post_s, err = parse_iso_date(post_date)
+            post_s, err = utils.parse_iso_date(post_date)
             if err:
                 return {"ok": False, "error": err}
-            pay_s, err = parse_iso_date(pay_date)
+            pay_s, err = utils.parse_iso_date(pay_date)
             if err:
                 return {"ok": False, "error": err}
             if post_s > pay_s:
@@ -1849,8 +1328,8 @@ class Api:
                         (cur.lastrowid, cur.lastrowid),
                     )
                     posted_count += 1
-                    next_pay_date = advance_one_month(next_pay_date, rule["pay_day"])
-                    next_post_date = advance_one_month(next_post_date, rule["post_day"])
+                    next_pay_date = utils.advance_one_month(next_pay_date, rule["pay_day"])
+                    next_post_date = utils.advance_one_month(next_post_date, rule["post_day"])
                 cur.execute(
                     "UPDATE autopays SET next_pay_date=?, next_post_date=? WHERE id=?",
                     (next_pay_date, next_post_date, rule["id"]),
@@ -1928,7 +1407,7 @@ class Api:
         to it. Found marks are browser-only, so all range rows are considered.
         """
         try:
-            cents, err = parse_amount_to_cents(amount, allow_negative=True, allow_zero=True)
+            cents, err = utils.parse_amount_to_cents(amount, allow_negative=True, allow_zero=True)
             if err:
                 return {"ok": False, "error": err}
             diff_cents = abs(cents)
@@ -2075,7 +1554,7 @@ class Api:
             "from_date": from_s,
             "to_date": to_s,
             "all_history": all_history,
-            "default_name": sanitize_filename(
+            "default_name": utils.sanitize_filename(
                 f"{account['name']}_Export_{token}_{datetime.date.today().strftime('%m%d%Y')}.csv"
             ),
         }
@@ -2097,7 +1576,7 @@ class Api:
             all_history = snapshot["all_history"]
 
             documents_dir = os.path.join(os.path.expanduser("~"), "Documents")
-            start_dir = documents_dir if os.path.isdir(documents_dir) else app_dir()
+            start_dir = documents_dir if os.path.isdir(documents_dir) else paths.app_dir()
 
             result = self._window.create_file_dialog(
                 webview.FileDialog.SAVE,
@@ -2129,15 +1608,15 @@ class Api:
 
     # --- preferences (local file, not stored in the db) ----------------------
     def _load_theme(self) -> str:
-        theme = load_prefs().get("theme")
+        theme = prefs.load_prefs().get("theme")
         return theme if theme in ("dark", "light") else "dark"
 
     def save_theme(self, theme: str):
         if theme not in ("dark", "light"):
             return {"ok": False}
-        prefs = load_prefs()
-        prefs["theme"] = theme
-        if save_prefs(prefs):
+        prefs_data = prefs.load_prefs()
+        prefs_data["theme"] = theme
+        if prefs.save_prefs(prefs_data):
             self.log(f"Theme set to {theme}")
             return {"ok": True}
         self.log("Could not save theme pref")
@@ -2156,11 +1635,11 @@ class Api:
             folder = result[0] if isinstance(result, (list, tuple)) else result
             if not folder:
                 return {"ok": True, "cancelled": True}
-            if not _writable_check(folder):
+            if not utils._writable_check(folder):
                 return {"ok": False, "error": "That folder isn't writable. Choose a different one."}
-            prefs = load_prefs()
-            prefs["backup_folder"] = folder
-            if not save_prefs(prefs):
+            prefs_data = prefs.load_prefs()
+            prefs_data["backup_folder"] = folder
+            if not prefs.save_prefs(prefs_data):
                 self.log("Could not save backup folder pref")
                 return {"ok": False, "error": "Couldn't save the backup folder setting."}
             self.log("Backup folder moved to a custom folder")
@@ -2172,9 +1651,9 @@ class Api:
     def reset_backup_folder(self):
         """Reset the backup location back to the default folder next to the app."""
         try:
-            prefs = load_prefs()
-            prefs.pop("backup_folder", None)
-            if not save_prefs(prefs):
+            prefs_data = prefs.load_prefs()
+            prefs_data.pop("backup_folder", None)
+            if not prefs.save_prefs(prefs_data):
                 self.log("Could not save backup folder pref on reset")
                 return {"ok": False, "error": "Couldn't reset the backup folder."}
             self.log("Backup folder reset to default")
@@ -2189,9 +1668,9 @@ class Api:
         safety backups are pruned separately and never count against this."""
         try:
             keep = _clamp_backup_keep(n)
-            prefs = load_prefs()
-            prefs["backup_keep"] = keep
-            if not save_prefs(prefs):
+            prefs_data = prefs.load_prefs()
+            prefs_data["backup_keep"] = keep
+            if not prefs.save_prefs(prefs_data):
                 self.log("Could not save backup count pref")
                 return {"ok": False, "error": "Couldn't save the backup count."}
             self.log(f"Backup keep count set to {keep}")
@@ -2222,7 +1701,7 @@ class Api:
         if error:
             return None, error
         try:
-            return _readonly_connection(full_path), None
+            return db._readonly_connection(full_path), None
         except Exception:
             return None, "That backup file is corrupt or unreadable."
 
@@ -2356,7 +1835,7 @@ class Api:
                 self.log(f"preview_restore staging failed: {detail}")
                 return {"ok": False, "error": err}
             try:
-                backup_conn = _readonly_connection(staged_path)
+                backup_conn = db._readonly_connection(staged_path)
                 try:
                     accounts_diff = self._diff_against_live(backup_conn)
                     categories = "same" if self._categories_match_live(backup_conn) else "differ"
@@ -2364,7 +1843,7 @@ class Api:
                 finally:
                     backup_conn.close()
             finally:
-                cleanup_failures = _remove_db_artifacts(staged_path)
+                cleanup_failures = db._remove_db_artifacts(staged_path)
                 if cleanup_failures:
                     self.log("preview_restore couldn't clean up its staged backup")
             timestamp = _parse_backup_timestamp(os.path.basename(full_path), full_path)
@@ -2401,7 +1880,7 @@ class Api:
                 db_path, backups_dir, self._conn
             )
             if prerestore_path is None:
-                cleanup_failures = _remove_db_artifacts(staged_path)
+                cleanup_failures = db._remove_db_artifacts(staged_path)
                 self.log("restore_backup cancelled because its safety backup failed")
                 if cleanup_failures:
                     self.log("restore_backup couldn't clean up its staged backup")
@@ -2409,15 +1888,15 @@ class Api:
 
             rollback_path, err = _make_rollback_copy(self._conn, db_dir)
             if err:
-                cleanup_failures = _remove_db_artifacts(staged_path)
+                cleanup_failures = db._remove_db_artifacts(staged_path)
                 self.log(f"restore_backup rollback snapshot failed: {err}")
                 if cleanup_failures:
                     self.log("restore_backup couldn't clean up its staged backup")
                 return {"ok": False, "error": "Couldn't prepare a local rollback copy, so the restore was cancelled."}
 
             if not self.close_conn():
-                cleanup_failures = _remove_db_artifacts(staged_path)
-                cleanup_failures += _remove_db_artifacts(rollback_path)
+                cleanup_failures = db._remove_db_artifacts(staged_path)
+                cleanup_failures += db._remove_db_artifacts(rollback_path)
                 self.log("restore_backup cancelled because the live database did not close")
                 if cleanup_failures:
                     self.log("restore_backup couldn't clean up temporary restore files")
@@ -2425,12 +1904,12 @@ class Api:
 
             if os.path.exists(db_path + "-journal"):
                 try:
-                    self.set_conn(open_db(db_path))
+                    self.set_conn(db.open_db(db_path))
                 except Exception as e:
                     self._conn = None
                     self.log(f"restore_backup couldn't reopen the live database after finding a journal: {e}")
-                cleanup_failures = _remove_db_artifacts(staged_path)
-                cleanup_failures += _remove_db_artifacts(rollback_path)
+                cleanup_failures = db._remove_db_artifacts(staged_path)
+                cleanup_failures += db._remove_db_artifacts(rollback_path)
                 self.log("restore_backup refused to replace a database with a journal beside it")
                 if cleanup_failures:
                     self.log("restore_backup couldn't clean up temporary restore files")
@@ -2440,12 +1919,12 @@ class Api:
                 os.replace(staged_path, db_path)
             except Exception as e:
                 try:
-                    self.set_conn(open_db(db_path))
+                    self.set_conn(db.open_db(db_path))
                 except Exception as reopen_error:
                     self._conn = None
                     self.log(f"restore_backup couldn't reopen unchanged live database: {reopen_error}")
-                cleanup_failures = _remove_db_artifacts(staged_path)
-                cleanup_failures += _remove_db_artifacts(rollback_path)
+                cleanup_failures = db._remove_db_artifacts(staged_path)
+                cleanup_failures += db._remove_db_artifacts(rollback_path)
                 self.log(f"restore_backup replace failed; live database was not changed: {e}")
                 if cleanup_failures:
                     self.log("restore_backup couldn't clean up temporary restore files")
@@ -2455,14 +1934,14 @@ class Api:
                 }
 
             try:
-                self.set_conn(open_db(db_path))
+                self.set_conn(db.open_db(db_path))
             except Exception as e:
                 self._conn = None
                 try:
                     os.replace(rollback_path, db_path)
                 except Exception as rollback_error:
-                    cleanup_failures = _remove_db_artifacts(staged_path)
-                    cleanup_failures += _remove_db_artifacts(rollback_path)
+                    cleanup_failures = db._remove_db_artifacts(staged_path)
+                    cleanup_failures += db._remove_db_artifacts(rollback_path)
                     self.log(
                         "restore_backup failed after replacement and couldn't put back "
                         f"the local rollback copy: {rollback_error}"
@@ -2477,18 +1956,18 @@ class Api:
                         ),
                     }
                 try:
-                    self.set_conn(open_db(db_path))
+                    self.set_conn(db.open_db(db_path))
                 except Exception as reopen_error:
                     self._conn = None
                     self.log(f"restore_backup put data back but couldn't reopen it: {reopen_error}")
-                cleanup_failures = _remove_db_artifacts(staged_path)
-                cleanup_failures += _remove_db_artifacts(rollback_path)
+                cleanup_failures = db._remove_db_artifacts(staged_path)
+                cleanup_failures += db._remove_db_artifacts(rollback_path)
                 self.log(f"restore_backup failed after replacement; live data was put back: {e}")
                 if cleanup_failures:
                     self.log("restore_backup couldn't clean up temporary restore files")
                 return {"ok": False, "error": "The restore failed and your data was put back."}
 
-            rollback_cleanup_failed = bool(_remove_db_artifacts(rollback_path))
+            rollback_cleanup_failed = bool(db._remove_db_artifacts(rollback_path))
             if rollback_cleanup_failed:
                 self.log("restore_backup completed but couldn't clean up its local rollback copy")
             self.log(
@@ -2499,7 +1978,7 @@ class Api:
             warnings = []
             if prune_failed:
                 self.log(f"Pre-restore prune couldn't delete {len(prune_failed)} file(s) in the backup folder")
-                warnings.append(_prune_failed_message(len(prune_failed)))
+                warnings.append(utils._prune_failed_message(len(prune_failed)))
             if rollback_cleanup_failed:
                 warnings.append("Restored, but a temporary copy in the data folder couldn't be deleted.")
             if warnings:
@@ -2526,7 +2005,7 @@ class Api:
         failure (see _update_error_reason), but always logged when debug is on."""
         result = {"current": APP_VERSION, "version": None, "update": False, "offline": False}
         try:
-            url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+            url = f"https://api.github.com/repos/{config.GITHUB_OWNER}/{config.GITHUB_REPO}/releases/latest"
             req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.load(r)
@@ -2598,29 +2077,8 @@ class Api:
 # ---------------------------------------------------------------------------
 # Startup: writable-location check + rolling backups
 # ---------------------------------------------------------------------------
-def _writable_check(folder: str) -> bool:
-    """Try creating and deleting a temp file next to the exe."""
-    try:
-        test_path = os.path.join(folder, f".wtest_{os.getpid()}.tmp")
-        with open(test_path, "w", encoding="utf-8") as f:
-            f.write("x")
-        os.remove(test_path)
-        return True
-    except Exception:
-        return False
 
 
-def _show_write_error(folder: str):
-    msg = (
-        "Simple Account Balancer keeps its data in a file next to the app, "
-        f"but this folder isn't writable:\n\n{folder}\n\n"
-        "This often happens when the app is placed in Program Files. Move it "
-        "to a writable folder (like your Desktop or Documents) and try again."
-    )
-    try:
-        ctypes.windll.user32.MessageBoxW(0, msg, "Simple Account Balancer", 0x10)  # MB_ICONERROR
-    except Exception:
-        pass
 
 
 def effective_backup_dir() -> tuple:
@@ -2629,21 +2087,20 @@ def effective_backup_dir() -> tuple:
     it), else the default backups/ folder next to the app. Returns
     (path, is_custom). Module-level, no Api state, so main() can call it
     before any window exists."""
-    custom = load_prefs().get("backup_folder")
+    custom = prefs.load_prefs().get("backup_folder")
     if custom:
         return custom, True
-    return os.path.join(app_dir(), BACKUP_DIRNAME), False
+    return os.path.join(paths.app_dir(), config.BACKUP_DIRNAME), False
 
 
 def _clamp_backup_keep(value) -> int:
     try:
         n = int(value)
     except (TypeError, ValueError):
-        return BACKUP_KEEP
-    return max(BACKUP_KEEP_MIN, min(BACKUP_KEEP_MAX, n))
+        return config.BACKUP_KEEP
+    return max(config.BACKUP_KEEP_MIN, min(config.BACKUP_KEEP_MAX, n))
 
 
-ALLOWED_URL_HOST = "jde-projects.com"
 
 
 def _is_allowed_url(url) -> bool:
@@ -2656,7 +2113,7 @@ def _is_allowed_url(url) -> bool:
     except ValueError:
         return False
     # Comparing the whole netloc rules out ports and user@host tricks.
-    return parts.scheme == "https" and parts.netloc == ALLOWED_URL_HOST
+    return parts.scheme == "https" and parts.netloc == config.ALLOWED_URL_HOST
 
 
 def _list_backup_files(backups_dir: str, prerestore: bool) -> list:
@@ -2692,7 +2149,7 @@ def _prune_backups(backups_dir: str, keep: int) -> list:
     return _prune_pool(backups_dir, keep, prerestore=False)
 
 
-def _prune_prerestore_backups(backups_dir: str, keep: int = PRERESTORE_KEEP) -> list:
+def _prune_prerestore_backups(backups_dir: str, keep: int = config.PRERESTORE_KEEP) -> list:
     return _prune_pool(backups_dir, keep, prerestore=True)
 
 
@@ -2706,7 +2163,7 @@ def _new_backup_path(backups_dir: str, prefix: str) -> str:
             return dest
 
 
-def _make_backup(db_path: str, backups_dir: str, keep: int = BACKUP_KEEP) -> tuple:
+def _make_backup(db_path: str, backups_dir: str, keep: int = config.BACKUP_KEEP) -> tuple:
     """Copy the database into backups_dir as balancer_YYYYMMDD_HHMMSS_ffffff.db,
     keeping only the newest `keep` regular backups. Pre-restore safety
     backups are a separate pool; see _make_prerestore_backup. Returns
@@ -2735,7 +2192,7 @@ def _make_prerestore_backup(
         os.makedirs(backups_dir, exist_ok=True)
         dest = _new_backup_path(backups_dir, "balancer_prerestore_")
         if src is None:
-            src = _readonly_connection(db_path)  # never creates a missing file
+            src = db._readonly_connection(db_path)  # never creates a missing file
         dst = sqlite3.connect(dest)
         src.backup(dst)
         dst.close()
@@ -2755,16 +2212,11 @@ def _make_prerestore_backup(
             except Exception:
                 pass
         if dest is not None:
-            _remove_db_artifacts(dest)
+            db._remove_db_artifacts(dest)
         return None, []
     return dest, _prune_prerestore_backups(backups_dir)
 
 
-def _prune_failed_message(count: int) -> str:
-    """Short enough for the bottom bar; the folder itself is shown in
-    Account settings, and the debug log line carries it."""
-    noun = "backup" if count == 1 else "backups"
-    return f"Couldn't delete {count} old {noun}. The backup folder may be read-only."
 
 
 def _parse_backup_timestamp(filename: str, full_path: str) -> str:
@@ -2791,13 +2243,13 @@ def _run_backup_with_fallback(db_path: str) -> tuple:
     the folder (e.g. a NAS) may only be temporarily offline. Never raises.
     Returns (success, used_fallback, actual_dir, filenames the prune
     couldn't delete)."""
-    default_dir = os.path.join(app_dir(), BACKUP_DIRNAME)
+    default_dir = os.path.join(paths.app_dir(), config.BACKUP_DIRNAME)
     try:
-        prefs = load_prefs()
-        keep = _clamp_backup_keep(prefs.get("backup_keep"))
+        prefs_data = prefs.load_prefs()
+        keep = _clamp_backup_keep(prefs_data.get("backup_keep"))
         target_dir, is_custom = effective_backup_dir()
         used_fallback = False
-        if is_custom and not (os.path.isdir(target_dir) and _writable_check(target_dir)):
+        if is_custom and not (os.path.isdir(target_dir) and utils._writable_check(target_dir)):
             target_dir = default_dir
             used_fallback = True
         ok, prune_failed = _make_backup(db_path, target_dir, keep)
@@ -2806,46 +2258,12 @@ def _run_backup_with_fallback(db_path: str) -> tuple:
         return False, False, default_dir, []
 
 
-def _show_backup_fallback_notice(actual_dir: str):
-    msg = (
-        "The backup folder wasn't reachable, so the closing backup was saved "
-        f"to {actual_dir} instead."
-    )
-    try:
-        ctypes.windll.user32.MessageBoxW(0, msg, "Simple Account Balancer", 0x40)  # MB_ICONINFORMATION
-    except Exception:
-        pass
 
 
-def _show_prune_failed_notice(count: int, folder: str):
-    msg = f"The closing backup was saved. {_prune_failed_message(count)}\n\nFolder: {folder}"
-    try:
-        ctypes.windll.user32.MessageBoxW(0, msg, "Simple Account Balancer", 0x30)  # MB_ICONWARNING
-    except Exception:
-        pass
 
 
-def _show_backup_failed_notice(folder: str):
-    msg = (
-        "The closing backup couldn't be saved. Tried to write it to "
-        f"{folder}."
-    )
-    try:
-        ctypes.windll.user32.MessageBoxW(0, msg, "Simple Account Balancer", 0x10)  # MB_ICONERROR
-    except Exception:
-        pass
 
 
-def _show_newer_schema_error():
-    msg = (
-        "This data file was created by a newer version of Simple Account "
-        "Balancer than this one.\n\n"
-        "Update to the latest version of the app to open it."
-    )
-    try:
-        ctypes.windll.user32.MessageBoxW(0, msg, "Simple Account Balancer", 0x10)  # MB_ICONERROR
-    except Exception:
-        pass
 
 
 def _is_remote_debugging_switch(token):
@@ -2990,12 +2408,12 @@ def main():
         except Exception:
             pass
 
-    folder = app_dir()
-    if not _writable_check(folder):
-        _show_write_error(folder)
+    folder = paths.app_dir()
+    if not utils._writable_check(folder):
+        platform_win._show_write_error(folder)
         sys.exit(1)
 
-    db_path = os.path.join(folder, DB_FILENAME)
+    db_path = os.path.join(folder, config.DB_FILENAME)
     api = Api()
     api.set_db_path(db_path)
     api._debug_log.prune()
@@ -3035,13 +2453,13 @@ def main():
             api.backup_notice = f"{api.backup_notice} {backup_msg}" if api.backup_notice else backup_msg
         if ok and prune_failed:
             api.log(f"Launch prune couldn't delete {len(prune_failed)} file(s) in {folder_kind}")
-            prune_msg = _prune_failed_message(len(prune_failed))
+            prune_msg = utils._prune_failed_message(len(prune_failed))
             api.backup_notice = f"{api.backup_notice} {prune_msg}" if api.backup_notice else prune_msg
 
     try:
-        conn = open_db(db_path)
-    except NewerSchemaError:
-        _show_newer_schema_error()
+        conn = db.open_db(db_path)
+    except db.NewerSchemaError:
+        platform_win._show_newer_schema_error()
         sys.exit(1)
 
     api.set_conn(conn)
@@ -3057,23 +2475,23 @@ def main():
 
     win = webview.create_window(
         "Simple Account Balancer",
-        url=resource_path("simple_account_balancer-UI.html"),
+        url=paths.resource_path("simple_account_balancer-UI.html"),
         js_api=api,
         width=1150,
         height=760,
-        min_size=(MIN_WINDOW_W, MIN_WINDOW_H),
+        min_size=(config.MIN_WINDOW_W, config.MIN_WINDOW_H),
         background_color="#0a0e14",
     )
     api.set_window(win)
-    win.events.shown += lambda: _restore_geometry(win)
+    win.events.shown += lambda: platform_win._restore_geometry(win)
 
     def _on_window_closing():
-        _save_geometry(win)
+        platform_win._save_geometry(win)
         return True
 
     win.events.closing += _on_window_closing
     try:
-        webview.start(gui="qt", icon=resource_path("simple_account_balancer.png"))
+        webview.start(gui="qt", icon=paths.resource_path("simple_account_balancer.png"))
     except TypeError:
         webview.start(gui="qt")
 
@@ -3099,12 +2517,12 @@ def main():
             # Failure wins over the fallback notice: a fallback that then
             # failed to write must not report that the backup was saved.
             if not ok:
-                _show_backup_failed_notice(actual_dir)
+                platform_win._show_backup_failed_notice(actual_dir)
             elif used_fallback:
-                _show_backup_fallback_notice(actual_dir)
+                platform_win._show_backup_fallback_notice(actual_dir)
             if ok and prune_failed:
                 api.log(f"Exit prune couldn't delete {len(prune_failed)} file(s) in {folder_kind}")
-                _show_prune_failed_notice(len(prune_failed), actual_dir)
+                platform_win._show_prune_failed_notice(len(prune_failed), actual_dir)
     except Exception:
         pass
 

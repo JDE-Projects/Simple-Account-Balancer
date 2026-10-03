@@ -12,14 +12,15 @@ app_dir = os.environ["UI_DRIVE_APP_DIR"]
 sys.path.insert(0, app_dir)
 
 import simple_account_balancer as sab  # noqa: E402
+from app import config, db  # noqa: E402
 
 
 def build():
     """Create the database and the due autopay; return the scenario's facts."""
     today = datetime.date.today()
     pay = today + datetime.timedelta(days=3)
-    db_path = os.path.join(app_dir, sab.DB_FILENAME)
-    conn = sab.open_db(db_path)
+    db_path = os.path.join(app_dir, config.DB_FILENAME)
+    conn = db.open_db(db_path)
     api = sab.Api()
     api.set_conn(conn)
     api.set_db_path(db_path)
