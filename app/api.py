@@ -12,6 +12,8 @@ from app.services import (
 )
 
 _DATABASE_FAILURE_MESSAGE = "Something went wrong saving your data. Please restart the app."
+
+
 def _database_call(method):
     """Serialize Api database access and discard abandoned write transactions."""
     @wraps(method)
