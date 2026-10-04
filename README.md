@@ -92,8 +92,9 @@ pipeline from this repo. You can also check the file against the published
   `pyinstaller`, `truststore`). `requirements.txt` is the full locked list
   generated from it by uv 0.12.17, with a checksum for every package; it is
   never edited by hand.
-- Keep `simple_account_balancer.py`, `simple_account_balancer-UI.html`, the
-  `fonts/` folder, the `.ico`, and `.png` together.
+- Keep `simple_account_balancer.py`, the `app/` folder,
+  `simple_account_balancer-UI.html`, the `fonts/` folder, the `.ico`, and
+  `.png` together.
 - Run from source: `pip install --require-hashes -r requirements.txt`, then
   `python simple_account_balancer.py`
 - Build the .exe: `Build_Simple_Account_Balancer.bat` -> `dist\Simple Account Balancer\Simple Account Balancer.exe`.
