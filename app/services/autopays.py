@@ -107,8 +107,7 @@ def add_autopay(api, account_id, payee, category, notes, amount, direction, post
             post_failed = True
         # This posting pass is triggered from the UI, not launch, so don't
         # leave a stale launch notice for the next startup to pick up.
-        api.autopay_notice = None
-        api.autopay_notice_is_error = False
+        api._set_autopay_notice(None)
         result = api.get_autopays(account["id"])
         if result.get("ok"):
             result["posted"] = posted
@@ -176,8 +175,7 @@ def update_autopay(api, autopay_id, payee, category, notes, amount, direction, p
             post_failed = True
         # This posting pass is triggered from the UI, not launch, so don't
         # leave a stale launch notice for the next startup to pick up.
-        api.autopay_notice = None
-        api.autopay_notice_is_error = False
+        api._set_autopay_notice(None)
         result = api.get_autopays(row["account_id"])
         if result.get("ok"):
             result["posted"] = posted
@@ -257,16 +255,15 @@ def post_due_autopays(api):
             )
         api._conn.commit()
         if posted_count == 1:
-            api.autopay_notice = "Added 1 autopay to the register."
+            api._autopay_notice = "Added 1 autopay to the register."
         elif posted_count > 1:
-            api.autopay_notice = f"Added {posted_count} autopays to the register."
-        api.autopay_notice_is_error = False
+            api._autopay_notice = f"Added {posted_count} autopays to the register."
+        api._autopay_notice_is_error = False
         api.log(f"post_due_autopays: posted {posted_count} transaction(s)")
         return posted_count
     except Exception as e:
         api._conn.rollback()
         api.log(f"post_due_autopays failed: {e}")
-        api.autopay_notice = _AUTOPAY_POST_FAILED_MESSAGE
-        api.autopay_notice_is_error = True
+        api._set_autopay_notice(_AUTOPAY_POST_FAILED_MESSAGE, is_error=True)
         return None
 

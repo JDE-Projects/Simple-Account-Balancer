@@ -431,3 +431,11 @@ def test_restore_backup_has_no_warning_when_prune_succeeds(tmp_path, monkeypatch
     api.close_conn()
     assert result["ok"] is True
     assert "warning" not in result
+
+
+def test_backup_notice_messages_join_in_order():
+    api = Api("test")
+    assert api._backup_notice is None
+    api._add_backup_notice("First.")
+    api._add_backup_notice("Second.")
+    assert api._backup_notice == "First. Second."

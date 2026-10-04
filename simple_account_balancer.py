@@ -187,7 +187,7 @@ def main():
             f"{', '.join(stale_restore_failures)}"
         )
         cleanup_msg = "A temporary restore file from an earlier session couldn't be deleted."
-        api.backup_notice = f"{api.backup_notice} {cleanup_msg}" if api.backup_notice else cleanup_msg
+        api._add_backup_notice(cleanup_msg)
     db_existed_before = os.path.exists(db_path)
 
     # Launch backup runs BEFORE open_db, so every launch snapshot is a
@@ -206,16 +206,16 @@ def main():
         # to write must not report that the backup was saved.
         if not ok:
             backup_msg = f"Today's backup couldn't be saved. Tried to write it to {actual_dir}."
-            api.backup_notice = f"{api.backup_notice} {backup_msg}" if api.backup_notice else backup_msg
+            api._add_backup_notice(backup_msg)
         elif used_fallback:
             backup_msg = (
                 f"Backup folder wasn't reachable. Today's backup was saved to {actual_dir} instead."
             )
-            api.backup_notice = f"{api.backup_notice} {backup_msg}" if api.backup_notice else backup_msg
+            api._add_backup_notice(backup_msg)
         if ok and prune_failed:
             api.log(f"Launch prune couldn't delete {len(prune_failed)} file(s) in {folder_kind}")
             prune_msg = utils._prune_failed_message(len(prune_failed))
-            api.backup_notice = f"{api.backup_notice} {prune_msg}" if api.backup_notice else prune_msg
+            api._add_backup_notice(prune_msg)
 
     try:
         conn = db.open_db(db_path)
@@ -231,8 +231,7 @@ def main():
         api.post_due_autopays()
     except Exception as e:
         api.log(f"post_due_autopays call failed: {e}")
-        api.autopay_notice = autopays._AUTOPAY_POST_FAILED_MESSAGE
-        api.autopay_notice_is_error = True
+        api._set_autopay_notice(autopays._AUTOPAY_POST_FAILED_MESSAGE, is_error=True)
 
     win = webview.create_window(
         "Simple Account Balancer",

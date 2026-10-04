@@ -148,8 +148,8 @@ def test_post_failure_rolls_back_rules_and_transactions_and_sets_notice(tmp_path
     assert api.post_due_autopays() is None
     assert _transaction_rows(api) == []
     assert _rule_dates(api) == before_dates
-    assert api.autopay_notice == POST_FAILURE_NOTICE
-    assert api.autopay_notice_is_error is True
+    assert api._autopay_notice == POST_FAILURE_NOTICE
+    assert api._autopay_notice_is_error is True
     config = api.get_config()
     assert config["autopay_notice"] == POST_FAILURE_NOTICE
     assert config["autopay_notice_is_error"] is True
@@ -187,8 +187,8 @@ def test_saved_autopay_reports_failed_due_post(tmp_path, monkeypatch, method):
     assert result["post_error"] == POST_FAILURE_ERROR
     assert [tuple(row) for row in api._conn.execute("SELECT payee FROM autopays").fetchall()] == [("Rent",)]
     assert _transaction_rows(api) == []
-    assert api.autopay_notice is None
-    assert api.autopay_notice_is_error is False
+    assert api._autopay_notice is None
+    assert api._autopay_notice_is_error is False
     api.close_conn()
 
 
@@ -196,9 +196,9 @@ def test_success_keeps_existing_notice_wording_and_clears_error_flag(tmp_path, m
     api = _make_api(tmp_path, monkeypatch)
     _freeze_today(monkeypatch, "2024-02-10")
     _add_rule(api, "Rent", "2024-02-10", "2024-02-10")
-    api.autopay_notice_is_error = True
+    api._autopay_notice_is_error = True
 
     assert api.post_due_autopays() == 1
-    assert api.autopay_notice == "Added 1 autopay to the register."
-    assert api.autopay_notice_is_error is False
+    assert api._autopay_notice == "Added 1 autopay to the register."
+    assert api._autopay_notice_is_error is False
     api.close_conn()
