@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 from app import config, db
-import simple_account_balancer as sab
+import app.api as sab
+from app.services import backup, restore
 
 
 BACKUP_NAME = "balancer_20240101_000000.db"
@@ -32,9 +33,9 @@ def _insert_account(conn, name):
 def _make_api(tmp_path, monkeypatch):
     backups = tmp_path / "backups"
     backups.mkdir()
-    monkeypatch.setattr(sab, "effective_backup_dir", lambda: (str(backups), False))
+    monkeypatch.setattr(backup, "effective_backup_dir", lambda: (str(backups), False))
     db_path = str(tmp_path / "live.db")
-    api = sab.Api()
+    api = sab.Api("test")
     api.set_conn(db.open_db(db_path))
     api.set_db_path(db_path)
     _insert_account(api._conn, "Live")
@@ -258,7 +259,7 @@ def test_restore_refuses_foreign_key_violation(tmp_path, monkeypatch):
 def test_restore_recovers_when_replace_fails(tmp_path, monkeypatch):
     api, db_path, backups = _make_api(tmp_path, monkeypatch)
     _backup_with_account(api, backups)
-    real_replace = sab.os.replace
+    real_replace = restore.os.replace
 
     def fail_stage_replace(src, dst):
         if os.path.basename(src).startswith(".balancer_restore_stage_"):
@@ -303,7 +304,7 @@ def test_restore_reports_manual_recovery_when_rollback_replace_fails(tmp_path, m
     api, db_path, backups = _make_api(tmp_path, monkeypatch)
     _backup_with_account(api, backups)
     real_open_db = db.open_db
-    real_replace = sab.os.replace
+    real_replace = restore.os.replace
     failed_open = False
 
     def fail_open_after_replacement(path):
@@ -372,7 +373,7 @@ def test_restore_shows_plain_error_when_staging_raises(tmp_path, monkeypatch):
 
 def test_prerestore_backup_never_creates_a_missing_database(tmp_path):
     missing = tmp_path / "missing.db"
-    path, _ = sab._make_prerestore_backup(str(missing), str(tmp_path / "backups"))
+    path, _ = backup._make_prerestore_backup(str(missing), str(tmp_path / "backups"))
 
     assert path is None
     assert not missing.exists()
@@ -381,7 +382,7 @@ def test_prerestore_backup_never_creates_a_missing_database(tmp_path):
 def test_restore_cancels_when_safety_backup_fails(tmp_path, monkeypatch):
     api, db_path, backups = _make_api(tmp_path, monkeypatch)
     _backup_with_account(api, backups)
-    monkeypatch.setattr(sab, "_make_prerestore_backup", lambda *_: (None, []))
+    monkeypatch.setattr(backup, "_make_prerestore_backup", lambda *_: (None, []))
 
     result = api.restore_backup(BACKUP_NAME)
 
@@ -567,7 +568,7 @@ def test_remove_stale_restore_files_only_matches_exact_restore_temp_names(tmp_pa
     for name in removable + untouched:
         (tmp_path / name).write_text("x")
 
-    removed, failures = sab._remove_stale_restore_files(str(tmp_path))
+    removed, failures = restore._remove_stale_restore_files(str(tmp_path))
 
     assert removed == len(removable)
     assert failures == []
@@ -579,7 +580,7 @@ def test_remove_stale_restore_files_reports_delete_failure(tmp_path, monkeypatch
     name = ".balancer_restore_stage_cannot_delete.db"
     path = tmp_path / name
     path.write_text("x")
-    real_remove = sab.os.remove
+    real_remove = restore.os.remove
 
     def fail_remove(candidate):
         if os.path.basename(candidate) == name:
@@ -588,5 +589,5 @@ def test_remove_stale_restore_files_reports_delete_failure(tmp_path, monkeypatch
 
     monkeypatch.setattr(sab.os, "remove", fail_remove)
 
-    assert sab._remove_stale_restore_files(str(tmp_path)) == (0, [name])
+    assert restore._remove_stale_restore_files(str(tmp_path)) == (0, [name])
     assert path.exists()

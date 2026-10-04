@@ -4,7 +4,7 @@ import inspect
 import re
 from pathlib import Path
 
-from simple_account_balancer import Api
+from app.api import Api
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -141,7 +141,7 @@ def test_public_api_method_signatures_are_unchanged():
 
 def test_fresh_api_public_attributes_are_unchanged():
     actual = sorted(
-        name for name, value in vars(Api()).items() if not name.startswith("_") and not callable(value)
+        name for name, value in vars(Api("test")).items() if not name.startswith("_") and not callable(value)
     )
     assert actual == PUBLIC_API_ATTRIBUTES
 

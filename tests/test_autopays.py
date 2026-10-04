@@ -4,7 +4,8 @@ import datetime
 import pytest
 
 from app import db
-import simple_account_balancer as sab
+import app.api as sab
+from app.services import backup
 
 POST_FAILURE_NOTICE = (
     "Autopays couldn't be added to the register today. Nothing was posted, and "
@@ -19,9 +20,9 @@ POST_FAILURE_ERROR = (
 def _make_api(tmp_path, monkeypatch):
     backups = tmp_path / "backups"
     backups.mkdir()
-    monkeypatch.setattr(sab, "effective_backup_dir", lambda: (str(backups), False))
+    monkeypatch.setattr(backup, "effective_backup_dir", lambda: (str(backups), False))
     db_path = str(tmp_path / "live.db")
-    api = sab.Api()
+    api = sab.Api("test")
     api.set_conn(db.open_db(db_path))
     api.set_db_path(db_path)
     api._conn.execute(

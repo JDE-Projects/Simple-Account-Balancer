@@ -20,7 +20,7 @@ import time
 app_dir = os.environ["UI_DRIVE_APP_DIR"]
 sys.path.insert(0, app_dir)
 
-import simple_account_balancer as sab  # noqa: E402
+from app.api import Api  # noqa: E402
 from app import config, db, prefs  # noqa: E402
 
 HOLD_S = 20
@@ -37,7 +37,7 @@ backups_dir = os.path.join(app_dir, config.BACKUP_DIRNAME)
 os.makedirs(backups_dir, exist_ok=True)
 
 conn = db.open_db(db_path)
-api = sab.Api()
+api = Api("ui-check")
 api.set_conn(conn)
 api.set_db_path(db_path)
 cfg = api.create_account("Checking", "500.00", "2026-01-15")

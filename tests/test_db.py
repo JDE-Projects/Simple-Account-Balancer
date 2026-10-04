@@ -6,7 +6,7 @@ import pytest
 
 from app.config import SCHEMA_VERSION
 from app.db import NewerSchemaError, SEED_CATEGORIES, open_db
-from simple_account_balancer import Api
+from app.api import Api
 
 
 def _api_with_estimated_transaction(tmp_path, amount_cents=-5000):
@@ -25,7 +25,7 @@ def _api_with_estimated_transaction(tmp_path, amount_cents=-5000):
         (amount_cents,),
     )
     conn.commit()
-    api = Api()
+    api = Api("test")
     api.set_conn(conn)
     return api, cur.lastrowid
 

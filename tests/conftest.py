@@ -10,7 +10,7 @@ APP_DIRECTORY = REPOSITORY_ROOT / "app"
 IGNORED_GUARD_DIRECTORIES = {".git", "__pycache__", ".pytest_cache", ".venv", ".ruff_cache"}
 APP_DATA_PATCH_TARGETS = {
     "app_dir": "app.paths.app_dir",
-    "effective_backup_dir": "simple_account_balancer.effective_backup_dir",
+    "effective_backup_dir": "app.services.backup.effective_backup_dir",
 }
 
 

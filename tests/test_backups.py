@@ -5,8 +5,9 @@ import datetime
 import os
 
 from app import config, db as app_db, paths, prefs, utils
-import simple_account_balancer as sab
-from simple_account_balancer import (
+import app.services.backup as sab
+from app.api import Api
+from app.services.backup import (
     _clamp_backup_keep,
     _list_backup_files,
     _parse_backup_timestamp,
@@ -222,7 +223,7 @@ def test_list_backups_shows_only_exact_names(tmp_path, monkeypatch):
     _touch(tmp_path, "balancer_prerestore_20240102_000000.db")
     for n in LOOK_ALIKES:
         _touch(tmp_path, n)
-    result = sab.Api().list_backups()
+    result = Api("test").list_backups()
     assert result["ok"] is True
     assert [b["filename"] for b in result["backups"]] == [
         "balancer_prerestore_20240102_000000.db",
@@ -327,7 +328,7 @@ def test_list_backups_breaks_same_second_ties_by_name(tmp_path, monkeypatch):
     for n in ["balancer_20240101_000000.db", "balancer_20240101_000000_000002.db",
               "balancer_20240101_000000_000001.db"]:
         _touch(tmp_path, n)
-    listed = [b["filename"] for b in sab.Api().list_backups()["backups"]]
+    listed = [b["filename"] for b in Api("test").list_backups()["backups"]]
     assert listed == [
         "balancer_20240101_000000_000002.db",
         "balancer_20240101_000000_000001.db",
@@ -403,7 +404,7 @@ def _api_with_one_backup(tmp_path, monkeypatch):
     backups.mkdir()
     monkeypatch.setattr(sab, "effective_backup_dir", lambda: (str(backups), False))
     db_path = str(tmp_path / "live.db")
-    api = sab.Api()
+    api = Api("test")
     api.set_conn(app_db.open_db(db_path))
     api.set_db_path(db_path)
     api.create_account("Checking", "100.00", "2024-01-01")

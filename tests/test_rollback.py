@@ -3,17 +3,18 @@ import sqlite3
 import threading
 
 from app import db, paths
-import simple_account_balancer as sab
+import app.api as sab
+from app.services import backup
 
 
 def _make_api(tmp_path, monkeypatch):
     backups = tmp_path / "backups"
     backups.mkdir()
-    monkeypatch.setattr(sab, "effective_backup_dir", lambda: (str(backups), False))
+    monkeypatch.setattr(backup, "effective_backup_dir", lambda: (str(backups), False))
     # Keep pref writes from account changes inside tmp_path, not the repo.
     monkeypatch.setattr(paths, "app_dir", lambda: str(tmp_path))
     db_path = str(tmp_path / "live.db")
-    api = sab.Api()
+    api = sab.Api("test")
     api.set_conn(db.open_db(db_path))
     api.set_db_path(db_path)
     api._conn.execute(

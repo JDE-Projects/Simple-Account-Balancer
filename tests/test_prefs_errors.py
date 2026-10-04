@@ -5,7 +5,7 @@ the pref write failed. All db access happens against a fresh sqlite file
 inside tmp_path; save_prefs itself is monkeypatched so no real .pref file
 needs to be involved."""
 from app import db, paths, prefs
-from simple_account_balancer import Api
+from app.api import Api
 
 
 class _FakeWindow:
@@ -23,7 +23,7 @@ def _make_api(tmp_path, monkeypatch):
     # stays inside tmp_path rather than touching the repo's own .pref file.
     monkeypatch.setattr(paths, "app_dir", lambda: str(tmp_path))
     conn = db.open_db(str(tmp_path / "test.db"))
-    api = Api()
+    api = Api("test")
     api.set_conn(conn)
     api.set_db_path(str(tmp_path / "test.db"))
     return api

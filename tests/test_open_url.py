@@ -4,7 +4,8 @@ import webbrowser
 
 import pytest
 
-import simple_account_balancer as sab
+import app.api as sab
+from app.services import updates
 
 
 ALLOWED = [
@@ -35,25 +36,25 @@ REFUSED = [
 
 @pytest.mark.parametrize("url", ALLOWED)
 def test_is_allowed_url_accepts_site(url):
-    assert sab._is_allowed_url(url) is True
+    assert updates._is_allowed_url(url) is True
 
 
 @pytest.mark.parametrize("url", REFUSED)
 def test_is_allowed_url_refuses_everything_else(url):
-    assert sab._is_allowed_url(url) is False
+    assert updates._is_allowed_url(url) is False
 
 
 def test_open_url_opens_allowed_site(monkeypatch):
     opened = []
     monkeypatch.setattr(webbrowser, "open", opened.append)
-    assert sab.Api().open_url("https://jde-projects.com")["ok"] is True
+    assert sab.Api("test").open_url("https://jde-projects.com")["ok"] is True
     assert opened == ["https://jde-projects.com"]
 
 
 def test_open_url_refuses_other_site_without_opening(monkeypatch):
     opened = []
     monkeypatch.setattr(webbrowser, "open", opened.append)
-    result = sab.Api().open_url("https://evil.example")
+    result = sab.Api("test").open_url("https://evil.example")
     assert result["ok"] is False
     assert "error" in result
     assert opened == []
