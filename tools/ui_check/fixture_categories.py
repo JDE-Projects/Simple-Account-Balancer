@@ -11,7 +11,8 @@ import time
 app_dir = os.environ["UI_DRIVE_APP_DIR"]
 sys.path.insert(0, app_dir)
 
-import simple_account_balancer as sab  # noqa: E402
+from app.api import Api  # noqa: E402
+from app import config, db  # noqa: E402
 
 
 def _add_autopay(conn, account_id, payee, category, now):
@@ -27,9 +28,9 @@ def _add_autopay(conn, account_id, payee, category, now):
 
 def build():
     """Create the database and the categories; return the scenario's facts."""
-    db_path = os.path.join(app_dir, sab.DB_FILENAME)
-    conn = sab.open_db(db_path)
-    api = sab.Api()
+    db_path = os.path.join(app_dir, config.DB_FILENAME)
+    conn = db.open_db(db_path)
+    api = Api("ui-check")
     api.set_conn(conn)
     api.set_db_path(db_path)
     cfg = api.create_account("Checking", "500.00", "2026-01-01")

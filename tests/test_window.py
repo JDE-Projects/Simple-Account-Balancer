@@ -7,7 +7,7 @@ both _save_geometry and _restore_geometry depend on: a failure anywhere in
 the underlying Win32 calls must come back as None, not raise.
 """
 
-import simple_account_balancer as app
+import app.platform_win as app
 
 
 # ─────────────────────────────────────────────────────────────

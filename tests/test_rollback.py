@@ -2,18 +2,20 @@
 import sqlite3
 import threading
 
-import simple_account_balancer as sab
+from app import db, paths
+import app.api as sab
+from app.services import backup
 
 
 def _make_api(tmp_path, monkeypatch):
     backups = tmp_path / "backups"
     backups.mkdir()
-    monkeypatch.setattr(sab, "effective_backup_dir", lambda: (str(backups), False))
+    monkeypatch.setattr(backup, "effective_backup_dir", lambda: (str(backups), False))
     # Keep pref writes from account changes inside tmp_path, not the repo.
-    monkeypatch.setattr(sab, "app_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(paths, "app_dir", lambda: str(tmp_path))
     db_path = str(tmp_path / "live.db")
-    api = sab.Api()
-    api.set_conn(sab.open_db(db_path))
+    api = sab.Api("test")
+    api.set_conn(db.open_db(db_path))
     api.set_db_path(db_path)
     api._conn.execute(
         "INSERT INTO accounts (name, starting_balance_cents, starting_date, created_at) "
@@ -251,7 +253,7 @@ def test_database_calls_serialize_writes_restore_and_close(tmp_path, monkeypatch
         assert errors == []
         assert _fresh_rows(db_path, "PRAGMA integrity_check") == [("ok",)]
         if api._conn is None:
-            api.set_conn(sab.open_db(db_path))
+            api.set_conn(db.open_db(db_path))
 
 
 def test_export_releases_database_lock_before_opening_dialog(tmp_path, monkeypatch):

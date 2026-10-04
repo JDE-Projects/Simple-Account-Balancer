@@ -3,7 +3,9 @@ import datetime
 
 import pytest
 
-import simple_account_balancer as sab
+from app import db
+import app.api as sab
+from app.services import autopays, backup
 
 POST_FAILURE_NOTICE = (
     "Autopays couldn't be added to the register today. Nothing was posted, and "
@@ -18,10 +20,10 @@ POST_FAILURE_ERROR = (
 def _make_api(tmp_path, monkeypatch):
     backups = tmp_path / "backups"
     backups.mkdir()
-    monkeypatch.setattr(sab, "effective_backup_dir", lambda: (str(backups), False))
+    monkeypatch.setattr(backup, "effective_backup_dir", lambda: (str(backups), False))
     db_path = str(tmp_path / "live.db")
-    api = sab.Api()
-    api.set_conn(sab.open_db(db_path))
+    api = sab.Api("test")
+    api.set_conn(db.open_db(db_path))
     api.set_db_path(db_path)
     api._conn.execute(
         "INSERT INTO accounts (name, starting_balance_cents, starting_date, created_at) "
@@ -39,7 +41,7 @@ def _freeze_today(monkeypatch, iso_date):
         def today(cls):
             return cls.fromisoformat(iso_date)
 
-    monkeypatch.setattr(sab.datetime, "date", FrozenDate)
+    monkeypatch.setattr(autopays.datetime, "date", FrozenDate)
 
 
 def _add_rule(api, payee, post_date, pay_date, is_variable=0):

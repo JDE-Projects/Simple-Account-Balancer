@@ -1,7 +1,8 @@
 """Focused coverage for the read-only Compare API."""
 import datetime
 
-from simple_account_balancer import Api, open_db
+from app.db import open_db
+from app.api import Api
 
 
 def _api_with_transactions(tmp_path, transactions, starting_balance_cents=10_000):
@@ -18,7 +19,7 @@ def _api_with_transactions(tmp_path, transactions, starting_balance_cents=10_000
         transactions,
     )
     conn.commit()
-    api = Api()
+    api = Api("test")
     api.set_conn(conn)
     return api
 

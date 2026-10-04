@@ -11,7 +11,7 @@ import urllib.error
 
 import pytest
 
-from simple_account_balancer import _update_error_reason
+from app.services.updates import _update_error_reason
 
 
 def test_ssl_cert_verification_error_wrapped_in_url_error():

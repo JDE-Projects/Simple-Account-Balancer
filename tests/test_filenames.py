@@ -4,7 +4,7 @@ Note: sanitize_filename only strips the Windows-illegal characters; it does
 not special-case reserved device names like CON or PRN, so that behavior is
 not asserted here (there's nothing in the source to verify against).
 """
-from simple_account_balancer import sanitize_filename
+from app.utils import sanitize_filename
 
 
 def test_sanitize_filename_no_illegal_chars_unchanged():
