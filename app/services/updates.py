@@ -1,4 +1,4 @@
-"""Update helpers."""
+"""Update helpers and operations."""
 
 import errno
 import json
@@ -6,6 +6,7 @@ import socket
 import ssl
 import urllib.error
 import urllib.parse
+import urllib.request
 
 from app import config
 
@@ -89,3 +90,47 @@ def _is_allowed_url(url) -> bool:
         return False
     # Comparing the whole netloc rules out ports and user@host tricks.
     return parts.scheme == "https" and parts.netloc == config.ALLOWED_URL_HOST
+
+def check_update(api):
+    """Compare the latest published release to APP_VERSION. Quiet in the UI on
+        failure (see _update_error_reason), but always logged when debug is on."""
+    result = {"current": api._version, "version": None, "update": False, "offline": False}
+    try:
+        url = f"https://api.github.com/repos/{config.GITHUB_OWNER}/{config.GITHUB_REPO}/releases/latest"
+        req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.load(r)
+        latest = (data.get("tag_name") or "").lstrip("v")
+        result["version"] = latest
+        if latest and api._is_newer(latest, api._version):
+            result["update"] = True
+        api.log(f"check_update: found v{latest}, current v{api._version}")
+    except Exception as e:
+        result["offline"] = True  # offline / private repo / rate-limited: stay quiet
+        result["reason"] = _update_error_reason(e)
+        api.log(f"check_update failed: {type(e).__name__}: {e}")
+    return result
+
+
+def _is_newer(latest: str, current: str) -> bool:
+    def parts(v):
+        out = []
+        for p in v.split("."):
+            try:
+                out.append(int(p))
+            except ValueError:
+                out.append(0)
+        return out
+    return parts(latest) > parts(current)
+
+
+def open_url(api, url: str):
+    """Open a link in the system browser, never by navigating the app window.
+        Only the JDE-Projects website is allowed (see _is_allowed_url)."""
+    import webbrowser
+    if not _is_allowed_url(url):
+        api.log("open_url refused an address outside the allowed site")
+        return {"ok": False, "error": "That link isn't allowed."}
+    webbrowser.open(url)
+    return {"ok": True}
+

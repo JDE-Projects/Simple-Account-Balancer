@@ -5,7 +5,7 @@ import pytest
 
 from app import db
 import app.api as sab
-from app.services import backup
+from app.services import autopays, backup
 
 POST_FAILURE_NOTICE = (
     "Autopays couldn't be added to the register today. Nothing was posted, and "
@@ -41,7 +41,7 @@ def _freeze_today(monkeypatch, iso_date):
         def today(cls):
             return cls.fromisoformat(iso_date)
 
-    monkeypatch.setattr(sab.datetime, "date", FrozenDate)
+    monkeypatch.setattr(autopays.datetime, "date", FrozenDate)
 
 
 def _add_rule(api, payee, post_date, pay_date, is_variable=0):
