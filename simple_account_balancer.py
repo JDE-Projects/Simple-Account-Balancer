@@ -25,7 +25,7 @@ from app.services import autopays, backup, restore
 
 import webview
 
-APP_VERSION = "1.9.2"
+APP_VERSION = "1.9.3"
 
 def _is_remote_debugging_switch(token):
     # Chromium on Windows accepts "--", "-" or "/" before a switch name and
