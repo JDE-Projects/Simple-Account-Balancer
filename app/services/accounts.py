@@ -78,9 +78,9 @@ def get_config(api):
             "backup_folder": backup_dir,
             "backup_folder_is_custom": backup_is_custom,
             "backup_keep": backup._clamp_backup_keep(prefs_data.get("backup_keep")),
-            "backup_notice": api.backup_notice,
-            "autopay_notice": api.autopay_notice,
-            "autopay_notice_is_error": api.autopay_notice_is_error,
+            "backup_notice": api._backup_notice,
+            "autopay_notice": api._autopay_notice,
+            "autopay_notice_is_error": api._autopay_notice_is_error,
         }
     except Exception as e:
         api.log(f"get_config failed: {e}")

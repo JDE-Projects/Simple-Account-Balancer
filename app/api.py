@@ -63,9 +63,9 @@ class Api:
             paths.app_dir(), "Simple Account Balancer",
             redact=utils.redact_log_text, on_warning=self._on_debug_log_warning,
         )
-        self.backup_notice = None
-        self.autopay_notice = None
-        self.autopay_notice_is_error = False
+        self._backup_notice = None
+        self._autopay_notice = None
+        self._autopay_notice_is_error = False
 
     def set_window(self, w):
         self._window = w
@@ -76,6 +76,15 @@ class Api:
 
     def set_db_path(self, path: str):
         self._db_path = path
+
+    # Underscore-prefixed so pywebview does not expose them to the page.
+    def _add_backup_notice(self, message: str):
+        """Join a message onto the notice shown on startup."""
+        self._backup_notice = f"{self._backup_notice} {message}" if self._backup_notice else message
+
+    def _set_autopay_notice(self, message, is_error: bool = False):
+        self._autopay_notice = message
+        self._autopay_notice_is_error = is_error
 
     @_database_call
     def close_conn(self):

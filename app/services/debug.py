@@ -29,7 +29,7 @@ def _on_debug_log_warning(api, message: str):
         the window's own thread is busy can never stall it."""
     window = api._window
     if window is None:
-        api.backup_notice = f"{api.backup_notice} {message}" if api.backup_notice else message
+        api._add_backup_notice(message)
         return
     script = (
         "window.onDebugLogWarning && window.onDebugLogWarning("

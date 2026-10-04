@@ -50,7 +50,7 @@ PUBLIC_API_SIGNATURES = [
     ("update_autopay", "(self, autopay_id, payee, category, notes, amount, direction, post_date, pay_date, is_variable=0)"),
     ("update_transaction", "(self, transaction_id, date, payee, category, notes, amount, direction)"),
 ]
-PUBLIC_API_ATTRIBUTES = ["autopay_notice", "autopay_notice_is_error", "backup_notice"]
+PUBLIC_API_ATTRIBUTES = []
 BACKEND_CALL_RE = re.compile(
     r"(?:api\(\)|window\s*\.\s*pywebview\s*\.\s*api)\s*\.\s*"
     r"(?P<name>[A-Za-z_$][\w$]*)\s*\("
