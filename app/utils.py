@@ -96,8 +96,8 @@ def sanitize_filename(name: str) -> str:
 # rejected values. The quote must not follow a letter or digit, so the
 # apostrophe in words like "couldn't" never opens a match.
 _LOG_QUOTED_RE = re.compile(r"""(?<![\w])(['"])(.*?)\1""")
-# An unquoted file path runs to the end of the line: a drive path (C:\\ or C:/)
-# or a network path (\\\\server or //server, but not the // in https://).
+# An unquoted file path runs to the end of the line: a drive path (C:\ or C:/)
+# or a network path (\\server or //server, but not the // in https://).
 _LOG_BARE_PATH_RE = re.compile(r"""(?:\b[A-Za-z]:[\\/]|(?<![\w:])[\\/]{2}[^\\/\s]).*""")
 
 

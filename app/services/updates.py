@@ -92,8 +92,9 @@ def _is_allowed_url(url) -> bool:
     return parts.scheme == "https" and parts.netloc == config.ALLOWED_URL_HOST
 
 def check_update(api):
-    """Compare the latest published release to APP_VERSION. Quiet in the UI on
-        failure (see _update_error_reason), but always logged when debug is on."""
+    """Compare the latest published release to the running version
+        (api._version). Quiet in the UI on failure (see _update_error_reason),
+        but always logged when debug is on."""
     result = {"current": api._version, "version": None, "update": False, "offline": False}
     try:
         url = f"https://api.github.com/repos/{config.GITHUB_OWNER}/{config.GITHUB_REPO}/releases/latest"

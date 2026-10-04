@@ -14,16 +14,6 @@ RESTORE_TEMP_FILENAME_RE = re.compile(
     r"^\.balancer_restore_(?:stage|rollback)_[A-Za-z0-9_]+\.db(?:-journal)?\Z"
 )
 
-# ---------------------------------------------------------------------------
-# Database
-# ---------------------------------------------------------------------------
-
-
-
-
-
-
-
 
 def _check_backup(path: str) -> str | None:
     """Return a plain-English reason when a backup is unsafe to restore."""
