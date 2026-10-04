@@ -6,6 +6,8 @@ import re
 import shutil
 import sqlite3
 
+import webview
+
 from app import config, db, paths, prefs, utils
 
 # Regular backups: balancer_YYYYMMDD_HHMMSS_ffffff.db
@@ -202,3 +204,86 @@ def _run_backup_with_fallback(db_path: str) -> tuple:
         return ok, used_fallback, target_dir, prune_failed
     except Exception:
         return False, False, default_dir, []
+
+
+def choose_backup_folder(api):
+    """Move the backup location to a folder the user picks. Existing
+        backup files are never moved; new backups just start landing there."""
+    try:
+        result = api._window.create_file_dialog(webview.FileDialog.FOLDER)
+        if not result:
+            return {"ok": True, "cancelled": True}
+        folder = result[0] if isinstance(result, (list, tuple)) else result
+        if not folder:
+            return {"ok": True, "cancelled": True}
+        if not utils._writable_check(folder):
+            return {"ok": False, "error": "That folder isn't writable. Choose a different one."}
+        prefs_data = prefs.load_prefs()
+        prefs_data["backup_folder"] = folder
+        if not prefs.save_prefs(prefs_data):
+            api.log("Could not save backup folder pref")
+            return {"ok": False, "error": "Couldn't save the backup folder setting."}
+        api.log("Backup folder moved to a custom folder")
+        return {"ok": True, "backup_folder": folder, "backup_folder_is_custom": True}
+    except Exception as e:
+        api.log(f"choose_backup_folder failed: {e}")
+        return {"ok": False, "error": "Couldn't set the backup folder."}
+
+
+def reset_backup_folder(api):
+    """Reset the backup location back to the default folder next to the app."""
+    try:
+        prefs_data = prefs.load_prefs()
+        prefs_data.pop("backup_folder", None)
+        if not prefs.save_prefs(prefs_data):
+            api.log("Could not save backup folder pref on reset")
+            return {"ok": False, "error": "Couldn't reset the backup folder."}
+        api.log("Backup folder reset to default")
+        default_dir, _ = effective_backup_dir()
+        return {"ok": True, "backup_folder": default_dir, "backup_folder_is_custom": False}
+    except Exception as e:
+        api.log(f"reset_backup_folder failed: {e}")
+        return {"ok": False, "error": "Couldn't reset the backup folder."}
+
+
+def set_backup_keep(api, n):
+    """Set how many regular backups to keep, clamped to 1..50. Pre-restore
+        safety backups are pruned separately and never count against this."""
+    try:
+        keep = _clamp_backup_keep(n)
+        prefs_data = prefs.load_prefs()
+        prefs_data["backup_keep"] = keep
+        if not prefs.save_prefs(prefs_data):
+            api.log("Could not save backup count pref")
+            return {"ok": False, "error": "Couldn't save the backup count."}
+        api.log(f"Backup keep count set to {keep}")
+        return {"ok": True, "backup_keep": keep}
+    except Exception as e:
+        api.log(f"set_backup_keep failed: {e}")
+        return {"ok": False, "error": "Couldn't save the backup count."}
+
+
+def list_backups(api):
+    """List backups in the effective backup folder, newest first."""
+    try:
+        backups_dir, _ = effective_backup_dir()
+        try:
+            names = os.listdir(backups_dir)
+        except Exception:
+            names = []
+        items = []
+        for name in names:
+            if not _is_backup_filename(name):
+                continue
+            full_path = os.path.join(backups_dir, name)
+            items.append({
+                "filename": name,
+                "timestamp": _parse_backup_timestamp(name, full_path),
+                "is_prerestore": name.startswith("balancer_prerestore_"),
+                "size_bytes": os.path.getsize(full_path) if os.path.isfile(full_path) else 0,
+            })
+        items.sort(key=lambda it: (it["timestamp"], it["filename"]), reverse=True)
+        return {"ok": True, "backups": items}
+    except Exception as e:
+        api.log(f"list_backups failed: {e}")
+        return {"ok": False, "error": "Couldn't list backups."}

@@ -266,7 +266,7 @@ def test_restore_recovers_when_replace_fails(tmp_path, monkeypatch):
             raise OSError("replace failed")
         return real_replace(src, dst)
 
-    monkeypatch.setattr(sab.os, "replace", fail_stage_replace)
+    monkeypatch.setattr(restore.os, "replace", fail_stage_replace)
     result = api.restore_backup(BACKUP_NAME)
 
     assert result["ok"] is False
@@ -322,7 +322,7 @@ def test_restore_reports_manual_recovery_when_rollback_replace_fails(tmp_path, m
         return real_replace(src, dst)
 
     monkeypatch.setattr(db, "open_db", fail_open_after_replacement)
-    monkeypatch.setattr(sab.os, "replace", fail_rollback_replace)
+    monkeypatch.setattr(restore.os, "replace", fail_rollback_replace)
     result = api.restore_backup(BACKUP_NAME)
 
     assert result["ok"] is False
@@ -587,7 +587,7 @@ def test_remove_stale_restore_files_reports_delete_failure(tmp_path, monkeypatch
             raise OSError("locked")
         real_remove(candidate)
 
-    monkeypatch.setattr(sab.os, "remove", fail_remove)
+    monkeypatch.setattr(restore.os, "remove", fail_remove)
 
     assert restore._remove_stale_restore_files(str(tmp_path)) == (0, [name])
     assert path.exists()
