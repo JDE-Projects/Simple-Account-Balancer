@@ -4,43 +4,70 @@ import calendar
 import datetime
 import os
 import re
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 
 
 # ---------------------------------------------------------------------------
 # Money helpers. All amounts are integer cents in Python and SQLite. Never
 # floats. Display formatting ("$1,234.56") happens in the UI, not here.
 # ---------------------------------------------------------------------------
+# The one accepted amount format, checked against the whole input after
+# surrounding spaces are trimmed: an optional + or - sign, an optional $, then
+# digits that are either plain (1234) or grouped by commas in threes (1,234),
+# then an optional decimal point and fraction digits. At least one digit is
+# required. Exponents (1e3), repeated or misplaced signs and dollar signs,
+# badly grouped commas, inner spaces, NaN, and infinity all fail the match.
+# [0-9] rather than \d, so non-ASCII digits are refused too.
+_AMOUNT_RE = re.compile(
+    r"(?P<sign>[+-])?\$?(?P<whole>[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)?(?:\.(?P<frac>[0-9]*))?"
+)
+
+# Largest accepted amount, in cents: $999,999,999,999.99. Far below SQLite's
+# integer limit, and low enough that about 90 maximum-size amounts can add up
+# in a running balance before passing JavaScript's exact-integer limit
+# (Number.MAX_SAFE_INTEGER), which the UI needs to display balances exactly.
+MAX_AMOUNT_CENTS = 99_999_999_999_999
+
+
 def parse_amount_to_cents(raw, *, allow_negative=False, allow_zero=False):
     """Parse a user-entered amount ('1,234.56', '$50', '12', '-40') to cents.
 
-    Returns (cents, None) on success or (None, error_message) on failure.
+    The input must match _AMOUNT_RE in full. Fractions past the cent round
+    half up ('10.999' -> 1100). Returns (cents, None) on success or
+    (None, error_message) on failure.
     """
+    if allow_negative:
+        invalid = "Enter a valid amount, such as 12, 12.34, $1,234.56, or -40."
+    else:
+        invalid = "Enter a valid amount, such as 12, 12.34, or $1,234.56."
     if raw is None:
         return None, "Amount is required."
     s = str(raw).strip()
     if not s:
         return None, "Amount is required."
-    neg = False
-    if s.startswith("-"):
-        neg = True
-        s = s[1:].strip()
-    elif s.startswith("+"):
-        s = s[1:].strip()
-    s = s.replace("$", "").replace(",", "").strip()
-    if not s:
-        return None, "Amount is required."
-    try:
-        value = Decimal(s)
-    except InvalidOperation:
-        return None, "Enter a valid amount."
+    m = _AMOUNT_RE.fullmatch(s)
+    if m is None:
+        return None, invalid
+    whole = (m.group("whole") or "").replace(",", "")
+    frac = m.group("frac") or ""
+    if not whole and not frac:
+        return None, invalid
+    neg = m.group("sign") == "-"
+    if neg and not allow_negative:
+        return None, invalid
+    # Enough precision for every digit typed, so a long fraction can never
+    # be rounded once by the decimal context and again to the cent.
+    with localcontext() as ctx:
+        ctx.prec = len(whole) + len(frac) + 4
+        try:
+            value = Decimal(f"{whole or '0'}.{frac or '0'}")
+        except InvalidOperation:
+            return None, invalid
+        cents = int((value * 100).to_integral_value(rounding=ROUND_HALF_UP))
+    if cents > MAX_AMOUNT_CENTS:
+        return None, "Amount is too large. The most it can be is $999,999,999,999.99."
     if neg:
-        if not allow_negative:
-            return None, "Enter a valid amount."
-        value = -value
-    cents = int((value * 100).to_integral_value(rounding=ROUND_HALF_UP))
-    if not allow_negative and cents < 0:
-        return None, "Amount must be greater than zero."
+        cents = -cents
     if not allow_zero and cents == 0:
         return None, "Amount must be greater than zero."
     return cents, None

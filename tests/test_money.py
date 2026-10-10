@@ -6,6 +6,10 @@ import pytest
 
 from app.utils import cents_to_decimal_str, parse_amount_to_cents
 
+INVALID = "Enter a valid amount, such as 12, 12.34, or $1,234.56."
+INVALID_NEG_OK = "Enter a valid amount, such as 12, 12.34, $1,234.56, or -40."
+TOO_LARGE = "Amount is too large. The most it can be is $999,999,999,999.99."
+
 
 # --- parse_amount_to_cents: happy path formats -----------------------------
 
@@ -68,7 +72,7 @@ def test_parse_amount_very_large_value():
 def test_parse_amount_negative_rejected_by_default():
     cents, err = parse_amount_to_cents("-40")
     assert cents is None
-    assert err == "Enter a valid amount."
+    assert err == INVALID
 
 
 def test_parse_amount_negative_allowed():
@@ -112,23 +116,125 @@ def test_parse_amount_empty_string():
 
 
 def test_parse_amount_dollar_sign_only():
-    # "$" is stripped, leaving nothing to parse.
+    # A lone "$" has no digits, so it is malformed rather than blank.
     cents, err = parse_amount_to_cents("$")
     assert cents is None
-    assert err == "Amount is required."
+    assert err == INVALID
 
 
 def test_parse_amount_garbage_text():
     cents, err = parse_amount_to_cents("abc")
     assert cents is None
-    assert err == "Enter a valid amount."
+    assert err == INVALID
 
 
 def test_parse_amount_garbage_second_decimal_point():
-    # Decimal() rejects a second decimal point outright.
+    # A second decimal point does not match the amount pattern.
     cents, err = parse_amount_to_cents("12.34.56")
     assert cents is None
-    assert err == "Enter a valid amount."
+    assert err == INVALID
+
+
+# --- malformed input is rejected ------------------------------------------------
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "--5", "-+5", "+-5", "1$2", "$$5", "$-5", "5$",
+        "1,2,3", "12,34", "1,234,56", ",123", "123,", "1,,234",
+        "1e3", "1E3", "NaN", "nan", "Infinity", "-Infinity", "inf",
+        "- 5", "$ 5", "1 234", "-", "+", "$", ".", "-$",
+        "12.34.56", "0x10", "１２", "1_000",
+    ],
+)
+def test_parse_amount_rejects_malformed(raw):
+    cents, err = parse_amount_to_cents(raw)
+    assert cents is None
+    assert err == INVALID
+
+
+@pytest.mark.parametrize("raw", ["1e3", "--5", "1,2,3", "abc"])
+def test_parse_amount_rejects_malformed_with_negative_allowed(raw):
+    cents, err = parse_amount_to_cents(raw, allow_negative=True)
+    assert cents is None
+    assert err == INVALID_NEG_OK
+
+
+def test_parse_amount_message_differs_by_negative_allowed():
+    _, plain = parse_amount_to_cents("abc")
+    _, neg_ok = parse_amount_to_cents("abc", allow_negative=True)
+    assert plain == INVALID
+    assert neg_ok == INVALID_NEG_OK
+    assert plain != neg_ok
+
+
+def test_parse_amount_whitespace_only_is_required():
+    cents, err = parse_amount_to_cents("   ")
+    assert cents is None
+    assert err == "Amount is required."
+
+
+# --- extra accepted formats -----------------------------------------------------
+
+@pytest.mark.parametrize(
+    "raw, expected_cents",
+    [
+        ("+5", 500),
+        (".5", 50),
+        ("5.", 500),
+        (" 12 ", 1200),
+        ("1,234,567.89", 123456789),
+        ("999999999999.99", 99999999999999),
+    ],
+)
+def test_parse_amount_accepts_extra_formats(raw, expected_cents):
+    cents, err = parse_amount_to_cents(raw)
+    assert err is None
+    assert cents == expected_cents
+
+
+def test_parse_amount_negative_with_dollar_after_sign():
+    cents, err = parse_amount_to_cents("-$1,234.56", allow_negative=True)
+    assert err is None
+    assert cents == -123456
+
+
+# --- upper limit -----------------------------------------------------------------
+
+def test_parse_amount_maximum_accepted():
+    cents, err = parse_amount_to_cents("999999999999.99")
+    assert err is None
+    assert cents == 99_999_999_999_999
+
+
+def test_parse_amount_rounding_over_maximum_rejected():
+    cents, err = parse_amount_to_cents("999999999999.995")
+    assert cents is None
+    assert err == TOO_LARGE
+
+
+def test_parse_amount_over_maximum_rejected():
+    cents, err = parse_amount_to_cents("1000000000000")
+    assert cents is None
+    assert err == TOO_LARGE
+
+
+def test_parse_amount_negative_maximum_accepted():
+    cents, err = parse_amount_to_cents("-999999999999.99", allow_negative=True)
+    assert err is None
+    assert cents == -99_999_999_999_999
+
+
+def test_parse_amount_negative_over_maximum_rejected():
+    cents, err = parse_amount_to_cents("-1000000000000", allow_negative=True)
+    assert cents is None
+    assert err == TOO_LARGE
+
+
+def test_parse_amount_long_fraction_under_half_cent_has_no_double_rounding():
+    cents, err = parse_amount_to_cents("0.00499999999999999999999999999999", allow_zero=True)
+    assert err is None
+    assert cents == 0
 
 
 # --- cents_to_decimal_str ---------------------------------------------------
