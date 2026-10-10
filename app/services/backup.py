@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import sqlite3
+import uuid
 
 import webview
 
@@ -21,6 +22,9 @@ from app import config, db, paths, prefs, utils
 # only, and \Z rather than $ so a trailing newline can't slip through.
 BACKUP_FILENAME_RE = re.compile(
     r"^balancer_(?:prerestore_)?([0-9]{8})_([0-9]{6})(?:_([0-9]{6}))?\.db\Z"
+)
+BACKUP_CANDIDATE_FILENAME_RE = re.compile(
+    r"^\.balancer_backup_candidate_[0-9a-f]{32}\.db\Z", re.ASCII
 )
 
 
@@ -111,18 +115,70 @@ def _new_backup_path(backups_dir: str, prefix: str) -> str:
             return dest
 
 
+def _remove_stale_backup_candidates(backups_dir: str) -> None:
+    """Best-effort removal of candidate files left by an interrupted backup."""
+    try:
+        names = os.listdir(backups_dir)
+    except Exception:
+        return
+    for name in names:
+        if BACKUP_CANDIDATE_FILENAME_RE.fullmatch(name):
+            try:
+                db._remove_db_artifacts(os.path.join(backups_dir, name))
+            except Exception:
+                pass
+
+
+def _candidate_is_valid(candidate_path: str) -> bool:
+    """True when a candidate backup has intact, supported SQLite data."""
+    conn = None
+    try:
+        conn = db._readonly_connection(candidate_path)
+        integrity = conn.execute("PRAGMA integrity_check").fetchall()
+        if len(integrity) != 1 or integrity[0][0] != "ok":
+            return False
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        return version > config.SCHEMA_VERSION or db._schema_contract_error(conn, version) is None
+    except Exception:
+        return False
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def _make_backup(db_path: str, backups_dir: str, keep: int = config.BACKUP_KEEP) -> tuple:
-    """Copy the database into backups_dir as balancer_YYYYMMDD_HHMMSS_ffffff.db,
-    keeping only the newest `keep` regular backups. Pre-restore safety
+    """Stage and validate a regular database backup before publishing it,
+    then keep only the newest `keep` regular backups. Pre-restore safety
     backups are a separate pool; see _make_prerestore_backup. Returns
     (success, filenames the prune couldn't delete)."""
+    candidate_path = None
     try:
         os.makedirs(backups_dir, exist_ok=True)
-        shutil.copy2(db_path, _new_backup_path(backups_dir, "balancer_"))
+        _remove_stale_backup_candidates(backups_dir)
+        candidate_path = os.path.join(
+            backups_dir, f".balancer_backup_candidate_{uuid.uuid4().hex}.db"
+        )
+        shutil.copy2(db_path, candidate_path)
     except Exception:
+        if candidate_path is not None:
+            db._remove_db_artifacts(candidate_path)
         return False, []
+    if not _candidate_is_valid(candidate_path):
+        db._remove_db_artifacts(candidate_path)
+        return False, []
+    while True:
+        try:
+            os.rename(candidate_path, _new_backup_path(backups_dir, "balancer_"))
+            break
+        except FileExistsError:
+            continue
+        except Exception:
+            db._remove_db_artifacts(candidate_path)
+            return False, []
     return True, _prune_backups(backups_dir, keep)
-
 
 def _make_prerestore_backup(
     db_path: str, backups_dir: str, source_conn: sqlite3.Connection | None = None
