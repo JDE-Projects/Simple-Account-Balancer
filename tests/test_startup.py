@@ -9,7 +9,8 @@ import pytest
 from app import config, db
 from app.api import Api
 from app.services import backup
-from app.startup import prepare_database
+from app.startup import StartupResult, prepare_database
+import simple_account_balancer as launcher
 
 
 def _make_version_two_database(path):
@@ -219,3 +220,82 @@ def test_old_file_with_rows_but_broken_schema_is_damaged(tmp_path):
     result = db.recover_and_check(str(live))
     assert result.status == "damaged"
     assert "missing" in result.detail
+
+
+def test_damaged_startup_restores_then_continues_with_notice(tmp_path, monkeypatch):
+    api = Api("test")
+    db_path = str(tmp_path / config.DB_FILENAME)
+    backup_path = str(tmp_path / "backups" / "balancer_20240101_000000.db")
+    kept_path = str(tmp_path / "simple_account_balancer.damaged_20240101_000000_deadbeef.db")
+    timestamp = __import__("datetime").datetime(2024, 1, 1, 12, 30)
+    monkeypatch.setattr(launcher.restore, "_find_launch_restore_backup", lambda *_: (backup_path, timestamp, 0))
+    monkeypatch.setattr(launcher.restore, "restore_damaged_database", lambda *_: (kept_path, None))
+    monkeypatch.setattr(launcher.startup, "prepare_database", lambda *_: StartupResult("continue", []))
+
+    result = launcher._recover_damaged_database(api, db_path, ["backups"], True)
+
+    assert result.outcome == "continue"
+    assert "restored from the backup of January 1, 2024 at 12:30:00 PM" in api._backup_notice
+    assert os.path.basename(kept_path) in api._backup_notice
+
+
+def test_damaged_startup_without_usable_backup_uses_hand_restore(tmp_path, monkeypatch):
+    api = Api("test")
+    live = tmp_path / config.DB_FILENAME
+    live.write_bytes(b"damaged")
+    monkeypatch.setattr(launcher.restore, "_find_launch_restore_backup", lambda *_: (None, None, 2))
+    shown = []
+    monkeypatch.setattr(launcher.platform_win, "_show_damaged_db_error", lambda *args: shown.append(args))
+    monkeypatch.setattr(launcher.restore, "restore_damaged_database", lambda *_: pytest.fail("must not restore"))
+
+    assert launcher._recover_damaged_database(api, str(live), ["backups"], True) is None
+    assert live.read_bytes() == b"damaged"
+    assert len(shown) == 1
+    folders, leading_text = shown[0]
+    assert folders == ["backups"]
+    assert leading_text.startswith("No usable backup was found.")
+    assert "2 newer backups could not be used" in leading_text
+
+
+def test_damaged_startup_notice_mentions_skipped_newer_backups(tmp_path, monkeypatch):
+    api = Api("test")
+    timestamp = __import__("datetime").datetime(2024, 1, 1)
+    monkeypatch.setattr(launcher.restore, "_find_launch_restore_backup", lambda *_: ("backup.db", timestamp, 1))
+    monkeypatch.setattr(launcher.restore, "restore_damaged_database", lambda *_: ("kept.db", None))
+    monkeypatch.setattr(launcher.startup, "prepare_database", lambda *_: StartupResult("continue", []))
+
+    launcher._recover_damaged_database(api, str(tmp_path / config.DB_FILENAME), ["backups"], True)
+
+    assert "1 newer backup could not be used" in api._backup_notice
+
+
+def test_damaged_startup_not_exclusive_never_restores_or_touches_files(tmp_path, monkeypatch):
+    api = Api("test")
+    live = tmp_path / config.DB_FILENAME
+    live.write_bytes(b"damaged")
+    monkeypatch.setattr(launcher.restore, "_find_launch_restore_backup", lambda *_: pytest.fail("must not search"))
+    shown = []
+    monkeypatch.setattr(launcher.platform_win, "_show_damaged_db_error", lambda *args: shown.append(args))
+
+    assert launcher._recover_damaged_database(api, str(live), ["backups"], False) is None
+    assert live.read_bytes() == b"damaged"
+    assert shown == [(["backups"],)]
+
+
+def test_damaged_startup_recheck_does_not_offer_a_second_restore(tmp_path, monkeypatch):
+    api = Api("test")
+    timestamp = __import__("datetime").datetime(2024, 1, 1)
+    monkeypatch.setattr(launcher.restore, "_find_launch_restore_backup", lambda *_: ("backup.db", timestamp, 0))
+    monkeypatch.setattr(launcher.restore, "restore_damaged_database", lambda *_: ("kept.db", None))
+    calls = []
+
+    def recheck(*_):
+        calls.append(True)
+        return StartupResult("damaged", ["backups"])
+
+    monkeypatch.setattr(launcher.startup, "prepare_database", recheck)
+
+    result = launcher._recover_damaged_database(api, "live.db", ["backups"], True)
+
+    assert result.outcome == "damaged"
+    assert calls == [True]

@@ -81,21 +81,66 @@ def strip_remote_debugging(environ, argv, frozen):
 
 
 _mutex_handle = None   # module-level: must live for the process lifetime
+_mutex_acquisition_error = False
 
 
 def _acquire_single_instance(mutex_name: str) -> bool:
     # Name convention: "JDE_Simple{Thing}Tool_SingleInstance"
     # Session-local (no "Global\" prefix): each Windows session (e.g. RDP,
     # fast user switching) gets its own instance instead of colliding across users.
-    global _mutex_handle
+    global _mutex_handle, _mutex_acquisition_error
+    _mutex_acquisition_error = False
     try:
         # use_last_error=True: ctypes.windll's GetLastError() can be clobbered
         # by ctypes-internal calls, so read the error via ctypes.get_last_error() instead.
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         _mutex_handle = kernel32.CreateMutexW(None, False, mutex_name)
+        if not _mutex_handle:
+            _mutex_acquisition_error = True
+            return True   # fail open, but never counts as exclusive
         return ctypes.get_last_error() != 183   # ERROR_ALREADY_EXISTS
     except Exception:
+        _mutex_acquisition_error = True
         return True   # fail open: never block launch over a mutex error
+
+
+def _newer_backups_note(count):
+    if not count:
+        return ""
+    return (
+        f" {count} newer backup{'s' if count != 1 else ''} could not be used "
+        "because a newer version of the app made them. Updating the app would allow using them."
+    )
+
+
+def _recover_damaged_database(api, db_path, folders, is_exclusive):
+    """Restore the newest good backup over a damaged database, at most once
+    per launch, and return the new startup result (None means stop)."""
+    if not is_exclusive:
+        platform_win._show_damaged_db_error(folders)
+        return None
+
+    full_path, timestamp, newer_version_count = restore._find_launch_restore_backup(api, folders)
+    if full_path is None:
+        platform_win._show_damaged_db_error(
+            folders, "No usable backup was found." + _newer_backups_note(newer_version_count)
+        )
+        return None
+
+    kept_path, error = restore.restore_damaged_database(api, full_path, db_path)
+    if error:
+        platform_win._show_damaged_db_error(folders, error)
+        return None
+
+    backup_time = restore._format_launch_backup_timestamp(timestamp)
+    api.log(f"Launch restored damaged database from {os.path.basename(full_path)}")
+    api._add_backup_notice(
+        "Your data file was damaged, so it was restored from the backup of "
+        f"{backup_time}. Changes made after that backup were lost. The damaged file was "
+        f"kept in the app folder as {os.path.basename(kept_path)}."
+        + _newer_backups_note(newer_version_count)
+    )
+    return startup.prepare_database(api, db_path)
 
 
 def _focus_existing_window(app_title: str) -> bool:
@@ -156,7 +201,9 @@ def main():
     except Exception:
         pass
 
-    if not _acquire_single_instance("JDE_SimpleAccountBalancer_SingleInstance"):
+    is_new_instance = _acquire_single_instance("JDE_SimpleAccountBalancer_SingleInstance")
+    is_exclusive = is_new_instance and not _mutex_acquisition_error
+    if not is_new_instance:
         if _focus_existing_window("Simple Account Balancer"):
             sys.exit(0)
         # window not found (startup race): fall through and launch normally,
@@ -191,8 +238,14 @@ def main():
         api._add_backup_notice(cleanup_msg)
     startup_result = startup.prepare_database(api, db_path)
     if startup_result.outcome == "damaged":
-        platform_win._show_damaged_db_error(startup_result.folders)
-        sys.exit(1)
+        startup_result = _recover_damaged_database(
+            api, db_path, startup_result.folders, is_exclusive
+        )
+        if startup_result is None:
+            sys.exit(1)
+        if startup_result.outcome == "damaged":
+            platform_win._show_damaged_db_error(startup_result.folders)
+            sys.exit(1)
     if startup_result.outcome == "unavailable":
         platform_win._show_db_unavailable_error()
         sys.exit(1)

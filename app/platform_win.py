@@ -288,9 +288,10 @@ def _show_newer_schema_error():
         pass
 
 
-def _show_damaged_db_error(folders: list):
+def _show_damaged_db_error(folders: list, leading_text: str | None = None):
     msg = (
-        "Simple Account Balancer can't open your data file because it is damaged.\n\n"
+        (f"{leading_text}\n\n" if leading_text else "")
+        + "Simple Account Balancer can't open your data file because it is damaged.\n\n"
         "Nothing was changed and no backups were removed. Your backups are in:\n"
         + "\n".join(folders)
         + f"\n\nTo recover, keep a copy of the damaged file, then copy the newest backup "

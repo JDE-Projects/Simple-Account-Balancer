@@ -591,3 +591,132 @@ def test_remove_stale_restore_files_reports_delete_failure(tmp_path, monkeypatch
 
     assert restore._remove_stale_restore_files(str(tmp_path)) == (0, [name])
     assert path.exists()
+
+
+def test_find_launch_restore_backup_uses_full_timestamp_and_skips_bad_files(tmp_path, monkeypatch):
+    api, _, primary = _make_api(tmp_path, monkeypatch)
+    default = tmp_path / "default-backups"
+    default.mkdir()
+    names = [
+        "balancer_20240101_120000.db",
+        "balancer_20240101_120000_000001.db",
+        "balancer_20240101_120000_000002.db",
+        "balancer_prerestore_20240102_000000_000000.db",
+        "balancer_20240103_000000_000000.db",
+    ]
+    for name in names:
+        (primary / name).write_bytes(b"backup")
+    (default / "balancer_20240102_000000_000000.db").write_bytes(b"backup")
+    corrupt = primary / "balancer_20240103_000000_000000.db"
+
+    def check(path):
+        if path == str(corrupt):
+            return "That backup file is corrupt or unreadable."
+        return None
+
+    monkeypatch.setattr(restore, "_check_backup", check)
+    full_path, timestamp, newer_count = restore._find_launch_restore_backup(
+        api, [str(primary), str(default), str(primary)]
+    )
+
+    assert full_path == str(default / "balancer_20240102_000000_000000.db")
+    assert timestamp.microsecond == 0
+    assert newer_count == 0
+    api.close_conn()
+
+
+def test_find_launch_restore_backup_orders_microseconds_before_legacy_names(tmp_path, monkeypatch):
+    api, _, backups = _make_api(tmp_path, monkeypatch)
+    legacy = backups / "balancer_20240101_120000.db"
+    first = backups / "balancer_20240101_120000_000001.db"
+    newest = backups / "balancer_20240101_120000_000002.db"
+    for path in (legacy, first, newest):
+        path.write_bytes(b"backup")
+    monkeypatch.setattr(restore, "_check_backup", lambda *_: None)
+
+    full_path, timestamp, newer_count = restore._find_launch_restore_backup(api, [str(backups)])
+
+    assert full_path == str(newest)
+    assert timestamp.microsecond == 2
+    assert newer_count == 0
+    api.close_conn()
+
+
+def test_find_launch_restore_backup_counts_newer_and_logs_unreadable_folder(tmp_path, monkeypatch):
+    api, _, backups = _make_api(tmp_path, monkeypatch)
+    newer = backups / "balancer_20240102_000000_000000.db"
+    older = backups / "balancer_20240101_000000_000000.db"
+    newer.write_bytes(b"newer")
+    older.write_bytes(b"older")
+    missing = tmp_path / "missing"
+
+    def check(path):
+        if path == str(newer):
+            return "That backup was made by a newer version of Simple Account Balancer. Update the app to restore it."
+        return "That backup file is corrupt or unreadable."
+
+    monkeypatch.setattr(restore, "_check_backup", check)
+    full_path, timestamp, newer_count = restore._find_launch_restore_backup(
+        api, [str(missing), str(backups)]
+    )
+
+    assert full_path is None
+    assert timestamp is None
+    assert newer_count == 1
+    api.close_conn()
+
+
+def test_restore_damaged_database_keeps_copy_moves_journal_and_publishes(tmp_path, monkeypatch):
+    api, db_path, backups = _make_api(tmp_path, monkeypatch)
+    backup_path = _backup_with_account(api, backups)
+    api.close_conn()
+    damaged = b"damaged live bytes"
+    Path(db_path).write_bytes(damaged)
+    Path(db_path + "-journal").write_bytes(b"damaged journal")
+
+    kept_path, error = restore.restore_damaged_database(api, str(backup_path), db_path)
+
+    assert error is None
+    assert _account_names(db_path) == ["Live", "Backup"]
+    assert Path(kept_path).read_bytes() == damaged
+    assert Path(kept_path + "-journal").read_bytes() == b"damaged journal"
+    assert not Path(db_path + "-journal").exists()
+    assert not list(tmp_path.glob(".balancer_restore_stage_*.db"))
+
+
+@pytest.mark.parametrize("step", ["stage", "keep", "journal", "publish"])
+def test_restore_damaged_database_failure_keeps_live_file(tmp_path, monkeypatch, step):
+    api, db_path, backups = _make_api(tmp_path, monkeypatch)
+    backup_path = _backup_with_account(api, backups)
+    api.close_conn()
+    damaged = b"damaged live bytes"
+    Path(db_path).write_bytes(damaged)
+
+    if step == "stage":
+        monkeypatch.setattr(restore, "_stage_backup", lambda *_: (_ for _ in ()).throw(OSError("stage")))
+    elif step == "keep":
+        monkeypatch.setattr(restore, "_keep_damaged_database", lambda *_: (_ for _ in ()).throw(OSError("keep")))
+    elif step == "journal":
+        monkeypatch.setattr(restore, "_move_damaged_journal", lambda *_: (_ for _ in ()).throw(OSError("journal")))
+    else:
+        monkeypatch.setattr(restore.os, "replace", lambda *_: (_ for _ in ()).throw(OSError("publish")))
+
+    kept_path, error = restore.restore_damaged_database(api, str(backup_path), db_path)
+
+    assert kept_path is None
+    assert error == "The automatic restore couldn't be completed. Your data file was not changed."
+    assert Path(db_path).read_bytes() == damaged
+    assert not list(tmp_path.glob(".balancer_restore_stage_*.db"))
+    if step in {"journal", "publish"}:
+        assert list(tmp_path.glob("simple_account_balancer.damaged_*.db"))
+
+
+def test_kept_damaged_files_survive_restore_temp_cleanup(tmp_path):
+    kept = tmp_path / "simple_account_balancer.damaged_20240101_000000_deadbeef.db"
+    journal = Path(str(kept) + "-journal")
+    kept.write_bytes(b"kept")
+    journal.write_bytes(b"journal")
+
+    assert restore._remove_stale_restore_files(str(tmp_path)) == (0, [])
+    assert kept.exists()
+    assert journal.exists()
