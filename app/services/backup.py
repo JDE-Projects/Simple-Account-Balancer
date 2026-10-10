@@ -3,7 +3,6 @@
 import datetime
 import os
 import re
-import shutil
 import sqlite3
 import uuid
 
@@ -134,11 +133,7 @@ def _candidate_is_valid(candidate_path: str) -> bool:
     conn = None
     try:
         conn = db._readonly_connection(candidate_path)
-        integrity = conn.execute("PRAGMA integrity_check").fetchall()
-        if len(integrity) != 1 or integrity[0][0] != "ok":
-            return False
-        version = conn.execute("PRAGMA user_version").fetchone()[0]
-        return version > config.SCHEMA_VERSION or db._schema_contract_error(conn, version) is None
+        return db._database_check_error(conn, allow_newer=True) is None
     except Exception:
         return False
     finally:
@@ -149,23 +144,52 @@ def _candidate_is_valid(candidate_path: str) -> bool:
                 pass
 
 
-def _make_backup(db_path: str, backups_dir: str, keep: int = config.BACKUP_KEEP) -> tuple:
+def _make_backup(
+    db_path: str,
+    backups_dir: str,
+    keep: int = config.BACKUP_KEEP,
+    source_conn: sqlite3.Connection | None = None,
+) -> tuple:
     """Stage and validate a regular database backup before publishing it,
     then keep only the newest `keep` regular backups. Pre-restore safety
     backups are a separate pool; see _make_prerestore_backup. Returns
     (success, filenames the prune couldn't delete)."""
     candidate_path = None
+    src = source_conn
+    owns_src = source_conn is None
+    dst = None
     try:
         os.makedirs(backups_dir, exist_ok=True)
         _remove_stale_backup_candidates(backups_dir)
         candidate_path = os.path.join(
             backups_dir, f".balancer_backup_candidate_{uuid.uuid4().hex}.db"
         )
-        shutil.copy2(db_path, candidate_path)
+        if src is None:
+            src = db._readwrite_connection(db_path, timeout=5.0)
+        dst = sqlite3.connect(candidate_path)
+        src.backup(dst)
+        dst.close()
+        dst = None
     except Exception:
+        if dst is not None:
+            try:
+                dst.close()
+            except Exception:
+                pass
+        if owns_src and src is not None:
+            try:
+                src.close()
+            except Exception:
+                pass
         if candidate_path is not None:
             db._remove_db_artifacts(candidate_path)
         return False, []
+    if owns_src and src is not None:
+        try:
+            src.close()
+        except Exception:
+            db._remove_db_artifacts(candidate_path)
+            return False, []
     if not _candidate_is_valid(candidate_path):
         db._remove_db_artifacts(candidate_path)
         return False, []
@@ -240,7 +264,9 @@ def _parse_backup_timestamp(filename: str, full_path: str) -> str:
         return datetime.datetime.min.isoformat(timespec="seconds")
 
 
-def _run_backup_with_fallback(db_path: str) -> tuple:
+def _run_backup_with_fallback(
+    db_path: str, source_conn: sqlite3.Connection | None = None
+) -> tuple:
     """Take a backup in the effective backup folder. If a custom folder is
     configured but is missing or unwritable right now, fall back to the
     default local folder for just this backup; the pref is left alone since
@@ -256,7 +282,7 @@ def _run_backup_with_fallback(db_path: str) -> tuple:
         if is_custom and not (os.path.isdir(target_dir) and utils._writable_check(target_dir)):
             target_dir = default_dir
             used_fallback = True
-        ok, prune_failed = _make_backup(db_path, target_dir, keep)
+        ok, prune_failed = _make_backup(db_path, target_dir, keep, source_conn=source_conn)
         return ok, used_fallback, target_dir, prune_failed
     except Exception:
         return False, False, default_dir, []

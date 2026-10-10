@@ -20,21 +20,7 @@ def _check_backup(path: str) -> str | None:
     conn = None
     try:
         conn = db._readonly_connection(path)
-        integrity = conn.execute("PRAGMA integrity_check").fetchall()
-        if len(integrity) != 1 or integrity[0][0] != "ok":
-            return "That backup file is corrupt or unreadable."
-        version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if version > config.SCHEMA_VERSION:
-            return (
-                "That backup was made by a newer version of Simple Account Balancer. "
-                "Update the app to restore it."
-            )
-        schema_error = db._schema_contract_error(conn, version)
-        if schema_error:
-            return schema_error
-        if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
-            return "That backup has broken links between its records."
-        return None
+        return db._database_check_error(conn, allow_newer=False)
     except Exception:
         return "That backup file is corrupt or unreadable."
     finally:

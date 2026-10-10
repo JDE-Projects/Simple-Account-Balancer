@@ -3,6 +3,7 @@ parsing, and pruning. All file operations happen inside tmp_path; nothing
 here touches a real backups/ folder."""
 import datetime
 import os
+import shutil
 import sqlite3
 
 from app import config, db as app_db, paths, prefs, utils
@@ -182,7 +183,7 @@ def test_restore_refuses_impossible_date_names(tmp_path, monkeypatch):
     # stop it.
     api, backups = _api_with_one_backup(tmp_path, monkeypatch)
     for n in IMPOSSIBLE_DATES:
-        sab.shutil.copy2(backups / "balancer_20240101_000000.db", backups / n)
+        shutil.copy2(backups / "balancer_20240101_000000.db", backups / n)
     try:
         for n in IMPOSSIBLE_DATES:
             assert api.restore_backup(n) == {
@@ -307,7 +308,36 @@ def test_make_backup_never_overwrites_a_taken_name(tmp_path, monkeypatch):
     ok, prune_failed = _make_backup(str(db), str(backups), keep=5)
     assert ok is True and prune_failed == []
     assert taken.read_text() == "earlier backup"
-    assert (backups / "balancer_20240101_090000_000001.db").read_bytes() == db.read_bytes()
+    snapshot = sqlite3.connect(backups / "balancer_20240101_090000_000001.db")
+    try:
+        assert snapshot.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert snapshot.execute("PRAGMA user_version").fetchone()[0] == config.SCHEMA_VERSION
+    finally:
+        snapshot.close()
+
+
+def test_make_backup_rejects_foreign_key_violation_without_pruning_existing(tmp_path):
+    live = tmp_path / "live.db"
+    conn = app_db.open_db(str(live))
+    try:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute(
+            "INSERT INTO transactions "
+            "(account_id, date, payee, category, notes, amount_cents, cleared, estimated, sort_key, created_at) "
+            "VALUES (999, '2024-01-01', 'broken', '', '', 1, 0, 0, 1, '2024-01-01')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    existing = backups / "balancer_20240101_000000.db"
+    existing.write_bytes(b"existing backup")
+    before = existing.read_bytes()
+
+    assert _make_backup(str(live), str(backups), keep=1) == (False, [])
+    assert existing.read_bytes() == before
+    assert list(backups.iterdir()) == [existing]
 
 
 def test_new_backups_carry_microseconds(tmp_path):
@@ -413,7 +443,7 @@ def _api_with_one_backup(tmp_path, monkeypatch):
     api.set_db_path(db_path)
     api.create_account("Checking", "100.00", "2024-01-01")
     api._conn.commit()
-    sab.shutil.copy2(db_path, backups / "balancer_20240101_000000.db")
+    shutil.copy2(db_path, backups / "balancer_20240101_000000.db")
     return api, backups
 
 

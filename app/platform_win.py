@@ -5,7 +5,7 @@ import ctypes.wintypes as wintypes
 import os
 import time
 
-from app import prefs, utils
+from app import config, prefs, utils
 
 
 # Save and restore the ABSOLUTE window frame rectangle via Win32, found by the
@@ -281,6 +281,45 @@ def _show_newer_schema_error():
         "This data file was created by a newer version of Simple Account "
         "Balancer than this one.\n\n"
         "Update to the latest version of the app to open it."
+    )
+    try:
+        ctypes.windll.user32.MessageBoxW(0, msg, "Simple Account Balancer", 0x10)  # MB_ICONERROR
+    except Exception:
+        pass
+
+
+def _show_damaged_db_error(folders: list):
+    msg = (
+        "Simple Account Balancer can't open your data file because it is damaged.\n\n"
+        "Nothing was changed and no backups were removed. Your backups are in:\n"
+        + "\n".join(folders)
+        + f"\n\nTo recover, keep a copy of the damaged file, then copy the newest backup "
+        f"into the app folder and rename it {config.DB_FILENAME}, replacing the damaged file."
+    )
+    try:
+        ctypes.windll.user32.MessageBoxW(0, msg, "Simple Account Balancer", 0x10)  # MB_ICONERROR
+    except Exception:
+        pass
+
+
+def _show_db_unavailable_error():
+    msg = (
+        "Simple Account Balancer couldn't open your data file. Another program, "
+        "such as a backup or sync tool, may be using it, or the drive may be unavailable.\n\n"
+        "Nothing was changed. Close other programs that might be using it, then try again."
+    )
+    try:
+        ctypes.windll.user32.MessageBoxW(0, msg, "Simple Account Balancer", 0x10)  # MB_ICONERROR
+    except Exception:
+        pass
+
+
+def _show_upgrade_blocked_error(folder: str):
+    msg = (
+        "This version of Simple Account Balancer needs to update your data file, "
+        "but it couldn't save a backup first, so it stopped without changing anything.\n\n"
+        f"It tried to save the backup to:\n{folder}\n\n"
+        "Make sure that folder is reachable and has free space, then try again."
     )
     try:
         ctypes.windll.user32.MessageBoxW(0, msg, "Simple Account Balancer", 0x10)  # MB_ICONERROR
