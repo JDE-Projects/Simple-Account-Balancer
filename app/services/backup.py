@@ -3,8 +3,8 @@
 import datetime
 import os
 import re
-import shutil
 import sqlite3
+import uuid
 
 import webview
 
@@ -21,6 +21,9 @@ from app import config, db, paths, prefs, utils
 # only, and \Z rather than $ so a trailing newline can't slip through.
 BACKUP_FILENAME_RE = re.compile(
     r"^balancer_(?:prerestore_)?([0-9]{8})_([0-9]{6})(?:_([0-9]{6}))?\.db\Z"
+)
+BACKUP_CANDIDATE_FILENAME_RE = re.compile(
+    r"^\.balancer_backup_candidate_[0-9a-f]{32}\.db\Z", re.ASCII
 )
 
 
@@ -111,18 +114,95 @@ def _new_backup_path(backups_dir: str, prefix: str) -> str:
             return dest
 
 
-def _make_backup(db_path: str, backups_dir: str, keep: int = config.BACKUP_KEEP) -> tuple:
-    """Copy the database into backups_dir as balancer_YYYYMMDD_HHMMSS_ffffff.db,
-    keeping only the newest `keep` regular backups. Pre-restore safety
+def _remove_stale_backup_candidates(backups_dir: str) -> None:
+    """Best-effort removal of candidate files left by an interrupted backup."""
+    try:
+        names = os.listdir(backups_dir)
+    except Exception:
+        return
+    for name in names:
+        if BACKUP_CANDIDATE_FILENAME_RE.fullmatch(name):
+            try:
+                db._remove_db_artifacts(os.path.join(backups_dir, name))
+            except Exception:
+                pass
+
+
+def _candidate_is_valid(candidate_path: str) -> bool:
+    """True when a candidate backup has intact, supported SQLite data."""
+    conn = None
+    try:
+        conn = db._readonly_connection(candidate_path)
+        return db._database_check_error(conn, allow_newer=True) is None
+    except Exception:
+        return False
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _make_backup(
+    db_path: str,
+    backups_dir: str,
+    keep: int = config.BACKUP_KEEP,
+    source_conn: sqlite3.Connection | None = None,
+) -> tuple:
+    """Stage and validate a regular database backup before publishing it,
+    then keep only the newest `keep` regular backups. Pre-restore safety
     backups are a separate pool; see _make_prerestore_backup. Returns
     (success, filenames the prune couldn't delete)."""
+    candidate_path = None
+    src = source_conn
+    owns_src = source_conn is None
+    dst = None
     try:
         os.makedirs(backups_dir, exist_ok=True)
-        shutil.copy2(db_path, _new_backup_path(backups_dir, "balancer_"))
+        _remove_stale_backup_candidates(backups_dir)
+        candidate_path = os.path.join(
+            backups_dir, f".balancer_backup_candidate_{uuid.uuid4().hex}.db"
+        )
+        if src is None:
+            src = db._readwrite_connection(db_path, timeout=5.0)
+        dst = sqlite3.connect(candidate_path)
+        src.backup(dst)
+        dst.close()
+        dst = None
     except Exception:
+        if dst is not None:
+            try:
+                dst.close()
+            except Exception:
+                pass
+        if owns_src and src is not None:
+            try:
+                src.close()
+            except Exception:
+                pass
+        if candidate_path is not None:
+            db._remove_db_artifacts(candidate_path)
         return False, []
+    if owns_src and src is not None:
+        try:
+            src.close()
+        except Exception:
+            db._remove_db_artifacts(candidate_path)
+            return False, []
+    if not _candidate_is_valid(candidate_path):
+        db._remove_db_artifacts(candidate_path)
+        return False, []
+    while True:
+        try:
+            os.rename(candidate_path, _new_backup_path(backups_dir, "balancer_"))
+            break
+        except FileExistsError:
+            continue
+        except Exception:
+            db._remove_db_artifacts(candidate_path)
+            return False, []
     return True, _prune_backups(backups_dir, keep)
-
 
 def _make_prerestore_backup(
     db_path: str, backups_dir: str, source_conn: sqlite3.Connection | None = None
@@ -184,7 +264,9 @@ def _parse_backup_timestamp(filename: str, full_path: str) -> str:
         return datetime.datetime.min.isoformat(timespec="seconds")
 
 
-def _run_backup_with_fallback(db_path: str) -> tuple:
+def _run_backup_with_fallback(
+    db_path: str, source_conn: sqlite3.Connection | None = None
+) -> tuple:
     """Take a backup in the effective backup folder. If a custom folder is
     configured but is missing or unwritable right now, fall back to the
     default local folder for just this backup; the pref is left alone since
@@ -200,7 +282,7 @@ def _run_backup_with_fallback(db_path: str) -> tuple:
         if is_custom and not (os.path.isdir(target_dir) and utils._writable_check(target_dir)):
             target_dir = default_dir
             used_fallback = True
-        ok, prune_failed = _make_backup(db_path, target_dir, keep)
+        ok, prune_failed = _make_backup(db_path, target_dir, keep, source_conn=source_conn)
         return ok, used_fallback, target_dir, prune_failed
     except Exception:
         return False, False, default_dir, []

@@ -1,5 +1,6 @@
 """SQLite database schema and connection helpers."""
 
+from dataclasses import dataclass
 import os
 import sqlite3
 import urllib.parse
@@ -65,6 +66,16 @@ class NewerSchemaError(Exception):
     """Raised by open_db when the database's PRAGMA user_version is higher
     than this build's SCHEMA_VERSION. The database is never touched in this
     case; the caller should tell the user to update the app."""
+
+
+@dataclass
+class RecoveryResult:
+    """The outcome of opening and checking an existing database."""
+
+    status: str
+    conn: sqlite3.Connection | None
+    version: int | None
+    detail: str
 
 
 def open_db(path: str) -> sqlite3.Connection:
@@ -185,6 +196,13 @@ def _readonly_connection(path: str) -> sqlite3.Connection:
     return conn
 
 
+def _readwrite_connection(path: str, timeout: float = 5.0) -> sqlite3.Connection:
+    uri = "file:" + urllib.parse.quote(path.replace("\\", "/")) + "?mode=rw"
+    conn = sqlite3.connect(uri, uri=True, timeout=timeout)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def _schema_contract_error(conn: sqlite3.Connection, version: int) -> str | None:
     required = _SCHEMA_REQUIRED_COLUMNS.get(version)
     if required is None:
@@ -207,6 +225,75 @@ def _schema_contract_error(conn: sqlite3.Connection, version: int) -> str | None
             if missing:
                 return f"That backup has an incomplete {table} table (missing {missing[0]})."
     return None
+
+
+def _database_check_error(conn: sqlite3.Connection, allow_newer: bool) -> str | None:
+    """Return a plain-English reason when a database is unsafe to use."""
+    integrity = conn.execute("PRAGMA integrity_check").fetchall()
+    if len(integrity) != 1 or integrity[0][0] != "ok":
+        return "That backup file is corrupt or unreadable."
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if version > config.SCHEMA_VERSION:
+        if allow_newer:
+            return None
+        return (
+            "That backup was made by a newer version of Simple Account Balancer. "
+            "Update the app to restore it."
+        )
+    schema_error = _schema_contract_error(conn, version)
+    if schema_error:
+        return schema_error
+    if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+        return "That backup has broken links between its records."
+    return None
+
+
+def _holds_no_rows(conn: sqlite3.Connection) -> bool:
+    """True when no table in the database has a single row, as left by a first
+    launch that stopped before the schema was fully created."""
+    tables = [
+        row["name"]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    ]
+    return all(
+        conn.execute(f'SELECT 1 FROM "{name}" LIMIT 1').fetchone() is None
+        for name in tables
+    )
+
+
+def recover_and_check(path: str, timeout: float = 5.0) -> RecoveryResult:
+    """Recover a rollback journal and check an existing database without
+    writing schema. Status is "ok" (conn left open), "empty" (an intact
+    version 0 file with no rows, safe for open_db to set up), "damaged", or
+    "unavailable"."""
+    conn = None
+    try:
+        conn = _readwrite_connection(path, timeout=timeout)
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        check_error = _database_check_error(conn, allow_newer=True)
+        if check_error is not None:
+            integrity_ok = check_error != "That backup file is corrupt or unreadable."
+            if integrity_ok and version == 0 and _holds_no_rows(conn):
+                conn.close()
+                return RecoveryResult("empty", None, version, "database holds no data yet")
+            conn.close()
+            return RecoveryResult("damaged", None, version, f"database check failed: {check_error}")
+        return RecoveryResult("ok", conn, version, "database recovered and checked")
+    except sqlite3.DatabaseError as error:
+        code = getattr(error, "sqlite_errorcode", 0) or 0
+        name = getattr(error, "sqlite_errorname", None) or type(error).__name__
+        if code & 0xFF in (11, 26):
+            status, detail = "damaged", f"database is corrupt or not SQLite ({name})"
+        else:
+            status, detail = "unavailable", f"database could not be opened ({name})"
+    except Exception as error:
+        status, detail = "unavailable", f"database could not be opened ({type(error).__name__})"
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return RecoveryResult(status, None, None, detail)
 
 
 def _remove_db_artifacts(path: str) -> list:

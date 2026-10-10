@@ -1,11 +1,13 @@
 """Restore helpers."""
 
+import datetime
 import hashlib
 import os
 import re
 import shutil
 import sqlite3
 import tempfile
+import uuid
 
 from app import config, db, utils
 from app.services import backup
@@ -20,21 +22,7 @@ def _check_backup(path: str) -> str | None:
     conn = None
     try:
         conn = db._readonly_connection(path)
-        integrity = conn.execute("PRAGMA integrity_check").fetchall()
-        if len(integrity) != 1 or integrity[0][0] != "ok":
-            return "That backup file is corrupt or unreadable."
-        version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if version > config.SCHEMA_VERSION:
-            return (
-                "That backup was made by a newer version of Simple Account Balancer. "
-                "Update the app to restore it."
-            )
-        schema_error = db._schema_contract_error(conn, version)
-        if schema_error:
-            return schema_error
-        if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
-            return "That backup has broken links between its records."
-        return None
+        return db._database_check_error(conn, allow_newer=False)
     except Exception:
         return "That backup file is corrupt or unreadable."
     finally:
@@ -70,6 +58,123 @@ def _remove_stale_restore_files(db_dir: str) -> tuple:
         except Exception:
             failures.append(name)
     return removed, failures
+
+
+def _launch_backup_timestamp(name: str) -> datetime.datetime:
+    """Return the complete timestamp encoded in a regular backup filename."""
+    match = backup.BACKUP_FILENAME_RE.match(name)
+    return datetime.datetime.strptime(
+        match.group(1) + match.group(2) + (match.group(3) or "000000"),
+        "%Y%m%d%H%M%S%f",
+    )
+
+
+def _format_launch_backup_timestamp(timestamp: datetime.datetime) -> str:
+    """Format a backup time for the launch restore notice."""
+    return timestamp.strftime("%B %d, %Y at %I:%M:%S %p").replace(" 0", " ")
+
+
+def _find_launch_restore_backup(api, folders: list[str]) -> tuple:
+    """Find the newest usable regular backup across the launch backup folders.
+
+    Returns (full_path, encoded_timestamp, newer_version_count).  A missing
+    path and timestamp mean no usable backup was found.
+    """
+    candidates = []
+    seen_folders = set()
+    for folder in folders:
+        normalized = os.path.normcase(os.path.abspath(folder))
+        if normalized in seen_folders:
+            continue
+        seen_folders.add(normalized)
+        try:
+            names = os.listdir(folder)
+        except Exception as error:
+            api.log(f"Launch restore skipped unreadable backup folder {folder}: {error}")
+            continue
+        for name in names:
+            if name.startswith("balancer_prerestore_") or not backup._is_backup_filename(name):
+                continue
+            candidates.append((_launch_backup_timestamp(name), name, os.path.join(folder, name)))
+
+    candidates.sort(key=lambda candidate: (candidate[0], candidate[1]), reverse=True)
+    newer_version_count = 0
+    for timestamp, _name, full_path in candidates:
+        error = _check_backup(full_path)
+        if error is None:
+            return full_path, timestamp, newer_version_count
+        if "newer version" in error:
+            newer_version_count += 1
+            api.log(f"Launch restore skipped newer-version backup {full_path}: {error}")
+        else:
+            api.log(f"Launch restore skipped unusable backup {full_path}: {error}")
+    return None, None, newer_version_count
+
+
+def _new_damaged_database_path(db_dir: str) -> str:
+    """Return a not-yet-used name for the damaged database copy."""
+    while True:
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        name = f"simple_account_balancer.damaged_{stamp}_{uuid.uuid4().hex[:8]}.db"
+        path = os.path.join(db_dir, name)
+        if not os.path.exists(path):
+            return path
+
+
+def _keep_damaged_database(live_path: str, db_dir: str) -> str:
+    """Copy the damaged live database into its permanent kept location."""
+    temp_path = None
+    try:
+        fd, temp_path = tempfile.mkstemp(
+            prefix=".balancer_restore_stage_", suffix=".db", dir=db_dir
+        )
+        os.close(fd)
+        shutil.copy2(live_path, temp_path)
+        kept_path = _new_damaged_database_path(db_dir)
+        os.rename(temp_path, kept_path)
+        temp_path = None
+        return kept_path
+    finally:
+        if temp_path is not None:
+            db._remove_db_artifacts(temp_path)
+
+
+def _move_damaged_journal(live_path: str, kept_path: str) -> None:
+    """Keep a damaged database journal alongside its matching saved copy."""
+    journal_path = live_path + "-journal"
+    if os.path.exists(journal_path):
+        os.replace(journal_path, kept_path + "-journal")
+
+
+def restore_damaged_database(api, full_path: str, live_path: str) -> tuple:
+    """Safely replace damaged launch data from a prepared backup.
+
+    The live path is never removed.  Returns (kept_damaged_path, error),
+    with a missing kept path when no replacement was published.
+    """
+    db_dir = os.path.dirname(os.path.abspath(live_path))
+    try:
+        staged_path, error, detail = _stage_backup(full_path, db_dir)
+    except Exception as error:
+        api.log(f"Launch restore staging failed: {type(error).__name__}: {error}")
+        return None, "The automatic restore couldn't be completed. Your data file was not changed."
+    if error:
+        api.log(f"Launch restore staging failed: {detail}")
+        return None, error
+    try:
+        kept_path = _keep_damaged_database(live_path, db_dir)
+        _move_damaged_journal(live_path, kept_path)
+        os.replace(staged_path, live_path)
+        staged_path = None
+        return kept_path, None
+    except Exception as error:
+        api.log(f"Launch restore failed before publishing the backup: {type(error).__name__}: {error}")
+        return None, "The automatic restore couldn't be completed. Your data file was not changed."
+    finally:
+        if staged_path is not None:
+            cleanup_failures = db._remove_db_artifacts(staged_path)
+            if cleanup_failures:
+                api.log("Launch restore couldn't clean up its staged backup")
 
 
 def _file_sha256(path: str) -> str:

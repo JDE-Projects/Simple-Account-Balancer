@@ -3,6 +3,8 @@ parsing, and pruning. All file operations happen inside tmp_path; nothing
 here touches a real backups/ folder."""
 import datetime
 import os
+import shutil
+import sqlite3
 
 from app import config, db as app_db, paths, prefs, utils
 import app.services.backup as sab
@@ -181,7 +183,7 @@ def test_restore_refuses_impossible_date_names(tmp_path, monkeypatch):
     # stop it.
     api, backups = _api_with_one_backup(tmp_path, monkeypatch)
     for n in IMPOSSIBLE_DATES:
-        sab.shutil.copy2(backups / "balancer_20240101_000000.db", backups / n)
+        shutil.copy2(backups / "balancer_20240101_000000.db", backups / n)
     try:
         for n in IMPOSSIBLE_DATES:
             assert api.restore_backup(n) == {
@@ -301,11 +303,41 @@ def test_make_backup_never_overwrites_a_taken_name(tmp_path, monkeypatch):
     taken = backups / "balancer_20240101_090000_000000.db"
     taken.write_text("earlier backup")
     db = tmp_path / "live.db"
-    db.write_text("live")
+    conn = app_db.open_db(str(db))
+    conn.close()
     ok, prune_failed = _make_backup(str(db), str(backups), keep=5)
     assert ok is True and prune_failed == []
     assert taken.read_text() == "earlier backup"
-    assert (backups / "balancer_20240101_090000_000001.db").read_text() == "live"
+    snapshot = sqlite3.connect(backups / "balancer_20240101_090000_000001.db")
+    try:
+        assert snapshot.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert snapshot.execute("PRAGMA user_version").fetchone()[0] == config.SCHEMA_VERSION
+    finally:
+        snapshot.close()
+
+
+def test_make_backup_rejects_foreign_key_violation_without_pruning_existing(tmp_path):
+    live = tmp_path / "live.db"
+    conn = app_db.open_db(str(live))
+    try:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute(
+            "INSERT INTO transactions "
+            "(account_id, date, payee, category, notes, amount_cents, cleared, estimated, sort_key, created_at) "
+            "VALUES (999, '2024-01-01', 'broken', '', '', 1, 0, 0, 1, '2024-01-01')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    existing = backups / "balancer_20240101_000000.db"
+    existing.write_bytes(b"existing backup")
+    before = existing.read_bytes()
+
+    assert _make_backup(str(live), str(backups), keep=1) == (False, [])
+    assert existing.read_bytes() == before
+    assert list(backups.iterdir()) == [existing]
 
 
 def test_new_backups_carry_microseconds(tmp_path):
@@ -372,7 +404,8 @@ def test_make_backup_passes_prune_failures_up(tmp_path, monkeypatch):
     old = "balancer_20200101_000000.db"
     _touch(backups, old)
     db = tmp_path / "live.db"
-    db.write_text("live")
+    conn = app_db.open_db(str(db))
+    conn.close()
     _fail_removing(monkeypatch, {old})
     assert _make_backup(str(db), str(backups), keep=1) == (True, [old])
 
@@ -386,7 +419,8 @@ def test_run_backup_with_fallback_passes_prune_failures_up(tmp_path, monkeypatch
     for n in old:
         _touch(backups, n)
     db = tmp_path / "live.db"
-    db.write_text("live")
+    conn = app_db.open_db(str(db))
+    conn.close()
     _fail_removing(monkeypatch, {old[0]})
     ok, used_fallback, _, prune_failed = _run_backup_with_fallback(str(db))
     assert ok is True and used_fallback is False
@@ -409,7 +443,7 @@ def _api_with_one_backup(tmp_path, monkeypatch):
     api.set_db_path(db_path)
     api.create_account("Checking", "100.00", "2024-01-01")
     api._conn.commit()
-    sab.shutil.copy2(db_path, backups / "balancer_20240101_000000.db")
+    shutil.copy2(db_path, backups / "balancer_20240101_000000.db")
     return api, backups
 
 
@@ -439,3 +473,108 @@ def test_backup_notice_messages_join_in_order():
     api._add_backup_notice("First.")
     api._add_backup_notice("Second.")
     assert api._backup_notice == "First. Second."
+
+
+# --- candidate validation and publication ---------------------------------------
+
+def _raise_permission_error(*args):
+    raise PermissionError("locked")
+
+
+def _make_real_db(path, marker=0):
+    conn = app_db.open_db(str(path))
+    conn.execute(f"PRAGMA application_id = {marker}")
+    conn.close()
+
+
+def test_make_backup_rejects_invalid_live_dbs_without_pruning(tmp_path):
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    originals = {}
+    for index in range(5):
+        name = f"balancer_2024010{index + 1}_000000.db"
+        path = backups / name
+        _make_real_db(path, index + 1)
+        originals[name] = path.read_bytes()
+    corrupt = tmp_path / "corrupt.db"
+    _make_real_db(corrupt)
+    with corrupt.open("r+b") as stream:
+        stream.seek(100)
+        stream.write(b"not a database")
+    non_sqlite = tmp_path / "not-sqlite.db"
+    non_sqlite.write_bytes(b"not sqlite")
+    for live_db in (corrupt, non_sqlite):
+        for _ in range(6):
+            assert _make_backup(str(live_db), str(backups), keep=5) == (False, [])
+        assert {name: (backups / name).read_bytes() for name in originals} == originals
+        assert sorted(os.listdir(backups)) == sorted(originals)
+
+
+def test_make_backup_rejects_empty_live_db(tmp_path):
+    live_db = tmp_path / "empty.db"
+    live_db.touch()
+    backups = tmp_path / "backups"
+    assert _make_backup(str(live_db), str(backups), keep=5) == (False, [])
+    assert os.listdir(backups) == []
+
+
+def test_make_backup_accepts_newer_version_and_prunes_valid_backup(tmp_path):
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    for index in range(5):
+        _make_real_db(backups / f"balancer_2024010{index + 1}_000000.db", index)
+    live_db = tmp_path / "live.db"
+    _make_real_db(live_db, 99)
+    conn = sqlite3.connect(live_db)
+    conn.execute(f"PRAGMA user_version = {config.SCHEMA_VERSION + 1}")
+    conn.close()
+    assert _make_backup(str(live_db), str(backups), keep=5) == (True, [])
+    retained = _list_backup_files(str(backups), prerestore=False)
+    assert len(retained) == 5
+    conn = app_db._readonly_connection(str(backups / retained[-1]))
+    try:
+        assert conn.execute("PRAGMA integrity_check").fetchall()[0][0] == "ok"
+    finally:
+        conn.close()
+    assert not any(sab.BACKUP_CANDIDATE_FILENAME_RE.fullmatch(n) for n in os.listdir(backups))
+
+
+def test_make_backup_removes_matching_leftover_candidate_only(tmp_path):
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    candidate = backups / ".balancer_backup_candidate_0123456789abcdef0123456789abcdef.db"
+    candidate.write_bytes(b"left over")
+    look_alike = backups / ".balancer_backup_candidate_not-hex.db"
+    look_alike.write_bytes(b"keep")
+    live_db = tmp_path / "live.db"
+    _make_real_db(live_db)
+    assert _make_backup(str(live_db), str(backups), keep=5) == (True, [])
+    assert not candidate.exists()
+    assert look_alike.read_bytes() == b"keep"
+
+
+def test_make_backup_removes_candidate_when_publication_fails(tmp_path, monkeypatch):
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    original = backups / "balancer_20240101_000000.db"
+    _make_real_db(original)
+    original_bytes = original.read_bytes()
+    live_db = tmp_path / "live.db"
+    _make_real_db(live_db)
+    monkeypatch.setattr(sab.os, "rename", _raise_permission_error)
+    assert _make_backup(str(live_db), str(backups), keep=1) == (False, [])
+    assert original.read_bytes() == original_bytes
+    assert _list_backup_files(str(backups), prerestore=False) == [original.name]
+    assert not any(sab.BACKUP_CANDIDATE_FILENAME_RE.fullmatch(n) for n in os.listdir(backups))
+
+
+def test_make_backup_continues_when_stale_candidate_cleanup_fails(tmp_path, monkeypatch):
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    stale = backups / ".balancer_backup_candidate_0123456789abcdef0123456789abcdef.db"
+    stale.write_bytes(b"left over")
+    live_db = tmp_path / "live.db"
+    _make_real_db(live_db)
+    monkeypatch.setattr(sab.db, "_remove_db_artifacts", _raise_permission_error)
+    assert _make_backup(str(live_db), str(backups), keep=5) == (True, [])
+    assert stale.exists()
