@@ -711,6 +711,86 @@ def test_restore_damaged_database_failure_keeps_live_file(tmp_path, monkeypatch,
         assert list(tmp_path.glob("simple_account_balancer.damaged_*.db"))
 
 
+def _fail_publish_replace(monkeypatch, live_path):
+    real_replace = os.replace
+
+    def replace(src, dst):
+        if dst == live_path:
+            raise OSError("publish")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(restore.os, "replace", replace)
+
+
+def test_restore_damaged_database_publish_failure_returns_journal(tmp_path, monkeypatch):
+    api, db_path, backups = _make_api(tmp_path, monkeypatch)
+    backup_path = _backup_with_account(api, backups)
+    api.close_conn()
+    Path(db_path).write_bytes(b"damaged live bytes")
+    Path(db_path + "-journal").write_bytes(b"damaged journal")
+    _fail_publish_replace(monkeypatch, db_path)
+
+    kept_path, error = restore.restore_damaged_database(api, str(backup_path), db_path)
+
+    assert kept_path is None
+    assert error == "The automatic restore couldn't be completed. Your data file was not changed."
+    assert Path(db_path).read_bytes() == b"damaged live bytes"
+    assert Path(db_path + "-journal").read_bytes() == b"damaged journal"
+    assert not list(tmp_path.glob("simple_account_balancer.damaged_*.db-journal"))
+
+
+def test_restore_damaged_database_journal_return_keeps_newer_journal(tmp_path, monkeypatch):
+    api, db_path, backups = _make_api(tmp_path, monkeypatch)
+    backup_path = _backup_with_account(api, backups)
+    api.close_conn()
+    Path(db_path).write_bytes(b"damaged live bytes")
+    Path(db_path + "-journal").write_bytes(b"damaged journal")
+    real_replace = os.replace
+
+    def replace(src, dst):
+        if dst == db_path:
+            Path(db_path + "-journal").write_bytes(b"newer journal")
+            raise OSError("publish")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(restore.os, "replace", replace)
+    messages = []
+    monkeypatch.setattr(api, "log", messages.append)
+
+    kept_path, error = restore.restore_damaged_database(api, str(backup_path), db_path)
+
+    assert kept_path is None
+    assert error == "The automatic restore couldn't be completed. Your data file was not changed."
+    assert Path(db_path + "-journal").read_bytes() == b"newer journal"
+    kept_journals = list(tmp_path.glob("simple_account_balancer.damaged_*.db-journal"))
+    assert [p.read_bytes() for p in kept_journals] == [b"damaged journal"]
+    assert any("couldn't return the damaged database journal" in m for m in messages)
+
+
+def test_restore_damaged_database_journal_move_failure_leaves_journal(tmp_path, monkeypatch):
+    api, db_path, backups = _make_api(tmp_path, monkeypatch)
+    backup_path = _backup_with_account(api, backups)
+    api.close_conn()
+    Path(db_path).write_bytes(b"damaged live bytes")
+    Path(db_path + "-journal").write_bytes(b"damaged journal")
+    real_replace = os.replace
+
+    def replace(src, dst):
+        if src == db_path + "-journal":
+            raise OSError("journal")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(restore.os, "replace", replace)
+
+    kept_path, error = restore.restore_damaged_database(api, str(backup_path), db_path)
+
+    assert kept_path is None
+    assert error == "The automatic restore couldn't be completed. Your data file was not changed."
+    assert Path(db_path).read_bytes() == b"damaged live bytes"
+    assert Path(db_path + "-journal").read_bytes() == b"damaged journal"
+    assert not list(tmp_path.glob("simple_account_balancer.damaged_*.db-journal"))
+
+
 def test_kept_damaged_files_survive_restore_temp_cleanup(tmp_path):
     kept = tmp_path / "simple_account_balancer.damaged_20240101_000000_deadbeef.db"
     journal = Path(str(kept) + "-journal")
