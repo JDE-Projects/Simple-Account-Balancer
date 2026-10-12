@@ -711,6 +711,38 @@ def test_restore_damaged_database_failure_keeps_live_file(tmp_path, monkeypatch,
         assert list(tmp_path.glob("simple_account_balancer.damaged_*.db"))
 
 
+def test_restore_damaged_database_removes_partial_kept_copy(tmp_path, monkeypatch):
+    api, db_path, backups = _make_api(tmp_path, monkeypatch)
+    backup_path = _backup_with_account(api, backups)
+    api.close_conn()
+    damaged = b"damaged live bytes"
+    Path(db_path).write_bytes(damaged)
+    logs = []
+    monkeypatch.setattr(api, "log", logs.append)
+    real_copy2 = restore.shutil.copy2
+    partial_paths = []
+
+    def copy2(src, dst, *args, **kwargs):
+        if os.path.abspath(src) != os.path.abspath(db_path):
+            return real_copy2(src, dst, *args, **kwargs)
+        Path(dst).write_bytes(damaged[:7])
+        partial_paths.append(dst)
+        raise OSError("disk full")
+
+    monkeypatch.setattr(restore.shutil, "copy2", copy2)
+
+    kept_path, error = restore.restore_damaged_database(api, str(backup_path), db_path)
+
+    assert len(partial_paths) == 1
+    assert not Path(partial_paths[0]).exists()
+    assert kept_path is None
+    assert error == "The automatic restore couldn't be completed. Your data file was not changed."
+    assert Path(db_path).read_bytes() == damaged
+    assert not list(tmp_path.glob(".balancer_restore_stage_*.db"))
+    assert not list(tmp_path.glob("simple_account_balancer.damaged_*.db"))
+    assert any("OSError: disk full" in line for line in logs)
+
+
 def _fail_publish_replace(monkeypatch, live_path):
     real_replace = os.replace
 
