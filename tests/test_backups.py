@@ -241,10 +241,11 @@ def test_run_backup_with_fallback_reports_failure_when_source_missing(tmp_path, 
     # simply doesn't exist, so the copy itself can't succeed either way.
     monkeypatch.setattr(paths, "app_dir", lambda: str(tmp_path))
     missing_db = str(tmp_path / "does_not_exist.db")
-    ok, used_fallback, actual_dir, prune_failed = _run_backup_with_fallback(missing_db)
+    ok, used_fallback, actual_dir, prune_failed, cleanup_failed = _run_backup_with_fallback(missing_db)
     assert ok is False
     assert used_fallback is False
     assert prune_failed == []
+    assert cleanup_failed == []
 
 
 # --- collision-safe names: microseconds, old names still work -------------------
@@ -305,7 +306,7 @@ def test_make_backup_never_overwrites_a_taken_name(tmp_path, monkeypatch):
     db = tmp_path / "live.db"
     conn = app_db.open_db(str(db))
     conn.close()
-    ok, prune_failed = _make_backup(str(db), str(backups), keep=5)
+    ok, prune_failed, _ = _make_backup(str(db), str(backups), keep=5)
     assert ok is True and prune_failed == []
     assert taken.read_text() == "earlier backup"
     snapshot = sqlite3.connect(backups / "balancer_20240101_090000_000001.db")
@@ -335,7 +336,7 @@ def test_make_backup_rejects_foreign_key_violation_without_pruning_existing(tmp_
     existing.write_bytes(b"existing backup")
     before = existing.read_bytes()
 
-    assert _make_backup(str(live), str(backups), keep=1) == (False, [])
+    assert _make_backup(str(live), str(backups), keep=1) == (False, [], [])
     assert existing.read_bytes() == before
     assert list(backups.iterdir()) == [existing]
 
@@ -345,7 +346,7 @@ def test_new_backups_carry_microseconds(tmp_path):
     conn = app_db.open_db(str(db))
     conn.close()
     backups = tmp_path / "backups"
-    ok, _ = _make_backup(str(db), str(backups), keep=5)
+    ok, _, _ = _make_backup(str(db), str(backups), keep=5)
     path, _ = _make_prerestore_backup(str(db), str(backups))
     assert ok is True and path is not None
     names = os.listdir(backups)
@@ -407,7 +408,7 @@ def test_make_backup_passes_prune_failures_up(tmp_path, monkeypatch):
     conn = app_db.open_db(str(db))
     conn.close()
     _fail_removing(monkeypatch, {old})
-    assert _make_backup(str(db), str(backups), keep=1) == (True, [old])
+    assert _make_backup(str(db), str(backups), keep=1) == (True, [old], [])
 
 
 def test_run_backup_with_fallback_passes_prune_failures_up(tmp_path, monkeypatch):
@@ -422,9 +423,27 @@ def test_run_backup_with_fallback_passes_prune_failures_up(tmp_path, monkeypatch
     conn = app_db.open_db(str(db))
     conn.close()
     _fail_removing(monkeypatch, {old[0]})
-    ok, used_fallback, _, prune_failed = _run_backup_with_fallback(str(db))
+    ok, used_fallback, _, prune_failed, cleanup_failed = _run_backup_with_fallback(str(db))
     assert ok is True and used_fallback is False
     assert prune_failed == [old[0]]
+    assert cleanup_failed == []
+
+
+def test_run_backup_with_fallback_passes_cleanup_failures_up(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "app_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(prefs, "load_prefs", lambda: {})
+    backups = tmp_path / config.BACKUP_DIRNAME
+    backups.mkdir()
+    stale = backups / STALE_CANDIDATE
+    stale.write_bytes(b"left over")
+    db = tmp_path / "live.db"
+    conn = app_db.open_db(str(db))
+    conn.close()
+    _fail_removing(monkeypatch, {stale.name})
+    ok, _, _, prune_failed, cleanup_failed = _run_backup_with_fallback(str(db))
+    assert ok is True
+    assert prune_failed == []
+    assert cleanup_failed == [f"{stale.name}: PermissionError"]
 
 
 def test_prune_failed_message_names_the_count():
@@ -477,6 +496,9 @@ def test_backup_notice_messages_join_in_order():
 
 # --- candidate validation and publication ---------------------------------------
 
+STALE_CANDIDATE = ".balancer_backup_candidate_0123456789abcdef0123456789abcdef.db"
+
+
 def _raise_permission_error(*args):
     raise PermissionError("locked")
 
@@ -505,7 +527,7 @@ def test_make_backup_rejects_invalid_live_dbs_without_pruning(tmp_path):
     non_sqlite.write_bytes(b"not sqlite")
     for live_db in (corrupt, non_sqlite):
         for _ in range(6):
-            assert _make_backup(str(live_db), str(backups), keep=5) == (False, [])
+            assert _make_backup(str(live_db), str(backups), keep=5) == (False, [], [])
         assert {name: (backups / name).read_bytes() for name in originals} == originals
         assert sorted(os.listdir(backups)) == sorted(originals)
 
@@ -514,7 +536,7 @@ def test_make_backup_rejects_empty_live_db(tmp_path):
     live_db = tmp_path / "empty.db"
     live_db.touch()
     backups = tmp_path / "backups"
-    assert _make_backup(str(live_db), str(backups), keep=5) == (False, [])
+    assert _make_backup(str(live_db), str(backups), keep=5) == (False, [], [])
     assert os.listdir(backups) == []
 
 
@@ -528,7 +550,7 @@ def test_make_backup_accepts_newer_version_and_prunes_valid_backup(tmp_path):
     conn = sqlite3.connect(live_db)
     conn.execute(f"PRAGMA user_version = {config.SCHEMA_VERSION + 1}")
     conn.close()
-    assert _make_backup(str(live_db), str(backups), keep=5) == (True, [])
+    assert _make_backup(str(live_db), str(backups), keep=5) == (True, [], [])
     retained = _list_backup_files(str(backups), prerestore=False)
     assert len(retained) == 5
     conn = app_db._readonly_connection(str(backups / retained[-1]))
@@ -546,11 +568,14 @@ def test_make_backup_removes_matching_leftover_candidate_only(tmp_path):
     candidate.write_bytes(b"left over")
     look_alike = backups / ".balancer_backup_candidate_not-hex.db"
     look_alike.write_bytes(b"keep")
+    journal_look_alike = backups / (candidate.name + "-journal.bak")
+    journal_look_alike.write_bytes(b"keep")
     live_db = tmp_path / "live.db"
     _make_real_db(live_db)
-    assert _make_backup(str(live_db), str(backups), keep=5) == (True, [])
+    assert _make_backup(str(live_db), str(backups), keep=5) == (True, [], [])
     assert not candidate.exists()
     assert look_alike.read_bytes() == b"keep"
+    assert journal_look_alike.read_bytes() == b"keep"
 
 
 def test_make_backup_removes_candidate_when_publication_fails(tmp_path, monkeypatch):
@@ -562,19 +587,68 @@ def test_make_backup_removes_candidate_when_publication_fails(tmp_path, monkeypa
     live_db = tmp_path / "live.db"
     _make_real_db(live_db)
     monkeypatch.setattr(sab.os, "rename", _raise_permission_error)
-    assert _make_backup(str(live_db), str(backups), keep=1) == (False, [])
+    assert _make_backup(str(live_db), str(backups), keep=1) == (False, [], [])
     assert original.read_bytes() == original_bytes
     assert _list_backup_files(str(backups), prerestore=False) == [original.name]
     assert not any(sab.BACKUP_CANDIDATE_FILENAME_RE.fullmatch(n) for n in os.listdir(backups))
 
 
-def test_make_backup_continues_when_stale_candidate_cleanup_fails(tmp_path, monkeypatch):
+def test_make_backup_reports_stale_candidate_it_could_not_remove(tmp_path, monkeypatch):
     backups = tmp_path / "backups"
     backups.mkdir()
-    stale = backups / ".balancer_backup_candidate_0123456789abcdef0123456789abcdef.db"
+    stale = backups / STALE_CANDIDATE
     stale.write_bytes(b"left over")
     live_db = tmp_path / "live.db"
     _make_real_db(live_db)
-    monkeypatch.setattr(sab.db, "_remove_db_artifacts", _raise_permission_error)
-    assert _make_backup(str(live_db), str(backups), keep=5) == (True, [])
+    _fail_removing(monkeypatch, {stale.name})
+    assert _make_backup(str(live_db), str(backups), keep=5) == (
+        True, [], [f"{stale.name}: PermissionError"]
+    )
     assert stale.exists()
+    assert len(_list_backup_files(str(backups), prerestore=False)) == 1
+
+
+def test_make_backup_removes_orphaned_candidate_journal(tmp_path):
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    journal = backups / (STALE_CANDIDATE + "-journal")
+    journal.write_bytes(b"left over")
+    live_db = tmp_path / "live.db"
+    _make_real_db(live_db)
+    assert _make_backup(str(live_db), str(backups), keep=5) == (True, [], [])
+    assert not journal.exists()
+
+
+def test_make_backup_retries_candidate_journal_left_by_failed_cleanup(tmp_path, monkeypatch):
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    stale = backups / STALE_CANDIDATE
+    stale.write_bytes(b"left over")
+    journal = backups / (STALE_CANDIDATE + "-journal")
+    journal.write_bytes(b"left over")
+    live_db = tmp_path / "live.db"
+    _make_real_db(live_db)
+    _fail_removing(monkeypatch, {journal.name})
+    assert _make_backup(str(live_db), str(backups), keep=5) == (
+        True, [], [f"{journal.name}: PermissionError"]
+    )
+    assert not stale.exists()
+    assert journal.exists()
+    monkeypatch.undo()
+    assert _make_backup(str(live_db), str(backups), keep=5) == (True, [], [])
+    assert not journal.exists()
+
+
+def test_log_cleanup_failures_logs_each_file():
+    logged = []
+
+    class FakeApi:
+        def log(self, message):
+            logged.append(message)
+
+    sab._log_cleanup_failures(FakeApi(), "Exit", ["a.db: PermissionError", "a.db-journal: OSError"])
+    sab._log_cleanup_failures(FakeApi(), "Exit", [])
+    assert logged == [
+        "Exit backup couldn't remove a leftover file: a.db: PermissionError",
+        "Exit backup couldn't remove a leftover file: a.db-journal: OSError",
+    ]

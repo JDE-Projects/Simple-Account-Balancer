@@ -308,12 +308,15 @@ def main():
     # backup failure here can never block shutdown.
     try:
         if os.path.exists(db_path):
-            ok, used_fallback, actual_dir, prune_failed = backup._run_backup_with_fallback(db_path)
+            ok, used_fallback, actual_dir, prune_failed, cleanup_failed = (
+                backup._run_backup_with_fallback(db_path)
+            )
             folder_kind = "the fallback folder" if used_fallback else "the backup folder"
             if ok:
                 api.log(f"Exit backup created in {folder_kind}")
             else:
                 api.log(f"Exit backup failed, tried {folder_kind}")
+            backup._log_cleanup_failures(api, "Exit", cleanup_failed)
             # Failure wins over the fallback notice: a fallback that then
             # failed to write must not report that the backup was saved.
             if not ok:
