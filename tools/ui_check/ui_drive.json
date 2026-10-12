@@ -53,6 +53,11 @@
       "fixture": "tools/ui_check/fixture_date_ranges.py",
       "timeout_s": 120
     },
+    "register-filters": {
+      "script": "tools/ui_check/register_filters.js",
+      "fixture": "tools/ui_check/fixture_register_filters.py",
+      "timeout_s": 120
+    },
     "balance-warning": {
       "script": "tools/ui_check/balance_warning.js",
       "fixture": "tools/ui_check/fixture_balance_warning.py",
