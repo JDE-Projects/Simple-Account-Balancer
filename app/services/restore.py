@@ -139,11 +139,32 @@ def _keep_damaged_database(live_path: str, db_dir: str) -> str:
             db._remove_db_artifacts(temp_path)
 
 
-def _move_damaged_journal(live_path: str, kept_path: str) -> None:
-    """Keep a damaged database journal alongside its matching saved copy."""
+def _move_damaged_journal(live_path: str, kept_path: str) -> bool:
+    """Keep a damaged database journal alongside its matching saved copy.
+
+    Returns True when a journal was moved.
+    """
     journal_path = live_path + "-journal"
     if os.path.exists(journal_path):
         os.replace(journal_path, kept_path + "-journal")
+        return True
+    return False
+
+
+def _return_damaged_journal(api, live_path: str, kept_path: str) -> None:
+    """Put a moved journal back beside the live file after a failed publish.
+
+    os.rename refuses to overwrite on Windows, so a journal that appeared
+    beside the live file in the meantime is never replaced.
+    """
+    try:
+        os.rename(kept_path + "-journal", live_path + "-journal")
+    except Exception as error:
+        api.log(
+            "Launch restore couldn't return the damaged database journal from "
+            f"{os.path.basename(kept_path)}-journal to {os.path.basename(live_path)}-journal: "
+            f"{type(error).__name__}: {error}"
+        )
 
 
 def restore_damaged_database(api, full_path: str, live_path: str) -> tuple:
@@ -161,14 +182,17 @@ def restore_damaged_database(api, full_path: str, live_path: str) -> tuple:
     if error:
         api.log(f"Launch restore staging failed: {detail}")
         return None, error
+    journal_moved = False
     try:
         kept_path = _keep_damaged_database(live_path, db_dir)
-        _move_damaged_journal(live_path, kept_path)
+        journal_moved = _move_damaged_journal(live_path, kept_path)
         os.replace(staged_path, live_path)
         staged_path = None
         return kept_path, None
     except Exception as error:
         api.log(f"Launch restore failed before publishing the backup: {type(error).__name__}: {error}")
+        if journal_moved:
+            _return_damaged_journal(api, live_path, kept_path)
         return None, "The automatic restore couldn't be completed. Your data file was not changed."
     finally:
         if staged_path is not None:
