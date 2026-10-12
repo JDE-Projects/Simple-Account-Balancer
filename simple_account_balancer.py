@@ -26,7 +26,7 @@ from app import startup
 
 import webview
 
-APP_VERSION = "1.10.0"
+APP_VERSION = "1.10.1"
 
 def _is_remote_debugging_switch(token):
     # Chromium on Windows accepts "--", "-" or "/" before a switch name and
