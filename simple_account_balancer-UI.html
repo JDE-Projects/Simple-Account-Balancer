@@ -2186,11 +2186,23 @@ function openAccountModal(){
 function closeAccountModal(){
   $("acctModalScrim").classList.remove("open");
 }
-/* Lenient parse for change detection only; real validation stays in Python. */
+/* Reads a starting balance the way Python's parse_amount_to_cents does
+   (allow_negative and allow_zero): an optional sign, an optional $, digits
+   plain or grouped by commas in threes, an optional fraction rounded half up
+   to the cent, at most $999,999,999,999.99. Returns null for anything Python
+   would refuse, so the save shows its own error instead of a warning. */
+const MAX_AMOUNT_CENTS = 99999999999999;
 function parseCentsForCompare(raw){
-  const s = String(raw || "").replace(/[$,]/g, "").trim();
-  if (!s || isNaN(Number(s))) return null;
-  return Math.round(Number(s) * 100);
+  const m = String(raw || "").trim()
+    .match(/^([+-])?\$?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)?(?:\.([0-9]*))?$/);
+  if (!m) return null;
+  const whole = (m[2] || "").replace(/,/g, "");
+  const frac = m[3] || "";
+  if (!whole && !frac) return null;
+  let cents = Number((whole || "0") + (frac + "00").slice(0, 2));
+  if (frac.length > 2 && frac[2] >= "5") cents += 1;
+  if (!(cents <= MAX_AMOUNT_CENTS)) return null;
+  return m[1] === "-" && cents ? -cents : cents;
 }
 async function saveAccount(){
   const errEl = $("am-err");
