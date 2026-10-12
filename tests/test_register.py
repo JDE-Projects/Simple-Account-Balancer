@@ -245,7 +245,7 @@ def test_register_same_day_edit_keeps_position_and_rebalances_later_rows(tmp_pat
         api._conn.close()
 
 
-def test_register_date_move_resets_position_and_rebalances_from_earlier_day(tmp_path, monkeypatch):
+def test_register_date_move_lands_last_on_a_never_reordered_day(tmp_path, monkeypatch):
     _freeze_today(monkeypatch)
     api = _api(tmp_path, monkeypatch)
     try:
@@ -273,19 +273,115 @@ def test_register_date_move_resets_position_and_rebalances_from_earlier_day(tmp_
             category="Transfer",
             notes="Moved day",
             estimated=0,
-            sort_key=moved,
+            sort_key=new_day_second + 1,
         )
         register = api.get_transactions(account_id, "2026-01-01", "2026-01-30")
         assert _rows_by_payee(register) == [
             (before, "Before", 9900),
             (old_day, "Old day", 9600),
-            (moved, "Moved", 9800),
-            (new_day_first, "New day first", 10200),
-            (new_day_second, "New day second", 9700),
+            (new_day_first, "New day first", 10000),
+            (new_day_second, "New day second", 9500),
+            (moved, "Moved", 9700),
             (later, "Later", 10300),
         ]
         assert register["current_balance_cents"] == 10300
         assert register["today_balance_cents"] == 10300
+    finally:
+        api._conn.close()
+
+
+def test_register_date_move_lands_last_on_a_reordered_day_and_rebalances(tmp_path, monkeypatch):
+    _freeze_today(monkeypatch)
+    api = _api(tmp_path, monkeypatch)
+    try:
+        account_id = _account(api)
+        moved = _add(api, account_id, "2026-01-09", "Move me", "2.00", "deposit")
+        first = _add(api, account_id, "2026-01-10", "First", "3.00", "deposit")
+        second = _add(api, account_id, "2026-01-10", "Second", "5.00", "withdraw")
+        third = _add(api, account_id, "2026-01-10", "Third", "7.00", "deposit")
+        assert api.reorder_transactions(account_id, "2026-01-10", [third, first, second]) == {"ok": True}
+
+        assert api.update_transaction(
+            moved, "2026-01-10", "Moved", "", "", "2.00", "deposit"
+        ) == {"ok": True}
+
+        day = _persisted_transactions(api, account_id)
+        sort_keys = {row["id"]: row["sort_key"] for row in day}
+        assert sort_keys == {moved: 4, first: 2, second: 3, third: 1}
+        register = api.get_transactions(account_id, "2026-01-01", "2026-01-30")
+        assert _rows_by_payee(register) == [
+            (third, "Third", 10700),
+            (first, "First", 11000),
+            (second, "Second", 10500),
+            (moved, "Moved", 10700),
+        ]
+    finally:
+        api._conn.close()
+
+
+def test_register_date_move_to_an_empty_day_sets_sort_key_one(tmp_path, monkeypatch):
+    _freeze_today(monkeypatch)
+    api = _api(tmp_path, monkeypatch)
+    try:
+        account_id = _account(api)
+        moved = _add(api, account_id, "2026-01-09", "Move me", "2.00", "deposit")
+
+        assert api.update_transaction(
+            moved, "2026-01-10", "Moved", "", "", "2.00", "deposit"
+        ) == {"ok": True}
+
+        persisted = _persisted_transactions(api, account_id)
+        assert persisted[0]["sort_key"] == 1
+        register = api.get_transactions(account_id, "2026-01-01", "2026-01-30")
+        assert _rows_by_payee(register) == [(moved, "Moved", 10200)]
+    finally:
+        api._conn.close()
+
+
+def test_register_date_move_uses_only_its_account_destination_rows(tmp_path, monkeypatch):
+    _freeze_today(monkeypatch)
+    api = _api(tmp_path, monkeypatch)
+    try:
+        account_a = _account(api, "Account A")
+        account_b = _account(api, "Account B")
+        moved = _add(api, account_a, "2026-01-09", "Move me", "2.00", "deposit")
+        first_a = _add(api, account_a, "2026-01-10", "A first", "3.00", "deposit")
+        second_a = _add(api, account_a, "2026-01-10", "A second", "5.00", "withdraw")
+        first_b = _add(api, account_b, "2026-01-10", "B first", "7.00", "deposit")
+        second_b = _add(api, account_b, "2026-01-10", "B second", "11.00", "withdraw")
+        b_state = _persisted_transactions(api, account_b)
+
+        assert api.update_transaction(
+            moved, "2026-01-10", "Moved", "", "", "2.00", "deposit"
+        ) == {"ok": True}
+
+        sort_keys = {row["id"]: row["sort_key"] for row in _persisted_transactions(api, account_a)}
+        assert sort_keys == {moved: second_a + 1, first_a: first_a, second_a: second_a}
+        assert _persisted_transactions(api, account_b) == b_state
+        assert {row["id"] for row in b_state} == {first_b, second_b}
+    finally:
+        api._conn.close()
+
+
+def test_register_added_transaction_follows_a_moved_transaction(tmp_path, monkeypatch):
+    _freeze_today(monkeypatch)
+    api = _api(tmp_path, monkeypatch)
+    try:
+        account_id = _account(api)
+        moved = _add(api, account_id, "2026-01-09", "Move me", "2.00", "deposit")
+        existing = _add(api, account_id, "2026-01-10", "Existing", "3.00", "deposit")
+        assert api.update_transaction(
+            moved, "2026-01-10", "Moved", "", "", "2.00", "deposit"
+        ) == {"ok": True}
+
+        added = _add(api, account_id, "2026-01-10", "Added later", "5.00", "withdraw")
+
+        register = api.get_transactions(account_id, "2026-01-01", "2026-01-30")
+        assert _rows_by_payee(register) == [
+            (existing, "Existing", 10300),
+            (moved, "Moved", 10500),
+            (added, "Added later", 10000),
+        ]
     finally:
         api._conn.close()
 

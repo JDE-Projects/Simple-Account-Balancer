@@ -128,7 +128,7 @@ def add_transaction(api, account_id, date, payee, category, notes, amount, direc
 def update_transaction(api, transaction_id, date, payee, category, notes, amount, direction):
     try:
         cur = api._conn.cursor()
-        row = cur.execute("SELECT id, date FROM transactions WHERE id=?", (transaction_id,)).fetchone()
+        row = cur.execute("SELECT id, account_id, date FROM transactions WHERE id=?", (transaction_id,)).fetchone()
         if row is None:
             return {"ok": False, "error": "That transaction no longer exists."}
         date_s, err = utils.parse_iso_date(date)
@@ -145,9 +145,9 @@ def update_transaction(api, transaction_id, date, payee, category, notes, amount
         signed = -cents if direction == "withdraw" else cents
         category_s = (category or "").strip()
         notes_s = (notes or "").strip()
-        # A date change moves the transaction to a different day, so its
-        # sort_key is reset to its id, landing it by the old insertion-order
-        # rule in the target day rather than carrying a stale position.
+        # A date change moves the transaction after every other posting on
+        # its new day for this account, preserving any established day order
+        # instead of carrying a stale position from the old day.
         # Saving the full editor counts as reviewing the posting, so any
         # estimated flag from a variable autopay is cleared here. Editing
         # without changing the amount still clears it, otherwise a user who
@@ -155,8 +155,19 @@ def update_transaction(api, transaction_id, date, payee, category, notes, amount
         if date_s != row["date"]:
             cur.execute(
                 "UPDATE transactions SET date=?, payee=?, category=?, notes=?, amount_cents=?, "
-                "estimated=0, sort_key=id WHERE id=?",
-                (date_s, payee_s, category_s, notes_s, signed, transaction_id),
+                "estimated=0, sort_key=(SELECT COALESCE(MAX(sort_key), 0) + 1 "
+                "FROM transactions WHERE account_id=? AND date=? AND id<>?) WHERE id=?",
+                (
+                    date_s,
+                    payee_s,
+                    category_s,
+                    notes_s,
+                    signed,
+                    row["account_id"],
+                    date_s,
+                    transaction_id,
+                    transaction_id,
+                ),
             )
         else:
             cur.execute(
