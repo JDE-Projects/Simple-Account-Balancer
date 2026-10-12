@@ -47,6 +47,11 @@
       "script": "tools/ui_check/notices.js",
       "fixture": "tools/ui_check/fixture_notices.py",
       "timeout_s": 120
+    },
+    "date-ranges": {
+      "script": "tools/ui_check/date_ranges.js",
+      "fixture": "tools/ui_check/fixture_date_ranges.py",
+      "timeout_s": 120
     }
   }
 }

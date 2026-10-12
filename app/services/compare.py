@@ -1,9 +1,8 @@
 """Compare operations."""
 
-import datetime
 import itertools
 
-from app import utils
+from app import config, utils
 
 def get_compare_data(api, account_id=None, from_date=None, to_date=None):
     """Return read-only Compare rows and the full register balance.
@@ -19,7 +18,7 @@ def get_compare_data(api, account_id=None, from_date=None, to_date=None):
         cur = api._conn.cursor()
         from_s = (from_date or "").strip()
         if not from_s:
-            from_s = (datetime.date.today() - datetime.timedelta(days=90)).isoformat()
+            from_s = utils.range_start_iso(config.COMPARE_RANGE_DAYS)
         to_s = (to_date or "").strip()
         query = (
             "SELECT id, date, payee, category, notes, amount_cents "
@@ -72,7 +71,7 @@ def find_compare_matches(api, account_id=None, amount=None, from_date=None, to_d
         cur = api._conn.cursor()
         from_s = (from_date or "").strip()
         if not from_s:
-            from_s = (datetime.date.today() - datetime.timedelta(days=90)).isoformat()
+            from_s = utils.range_start_iso(config.COMPARE_RANGE_DAYS)
         to_s = (to_date or "").strip()
         def row_dict(r):
             return {
