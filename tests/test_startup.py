@@ -81,7 +81,7 @@ def test_recover_hot_journal_then_snapshot_has_only_committed_rows(tmp_path):
     assert not os.path.exists(str(crash_copy) + "-journal")
     backups = tmp_path / "backups"
     try:
-        assert backup._make_backup(str(crash_copy), str(backups), source_conn=recovery.conn) == (True, [])
+        assert backup._make_backup(str(crash_copy), str(backups), source_conn=recovery.conn) == (True, [], [])
     finally:
         recovery.conn.close()
     snapshot = sqlite3.connect(next(backups.iterdir()))
@@ -144,7 +144,7 @@ def test_backup_failure_blocks_upgrade_without_changing_live_database(tmp_path, 
     live = tmp_path / config.DB_FILENAME
     _make_version_two_database(live)
     before = live.read_bytes()
-    monkeypatch.setattr(backup, "_run_backup_with_fallback", lambda *args, **kwargs: (False, False, "x", []))
+    monkeypatch.setattr(backup, "_run_backup_with_fallback", lambda *args, **kwargs: (False, False, "x", [], []))
 
     result = prepare_database(Api("test"), str(live))
 
@@ -158,10 +158,28 @@ def test_backup_failure_at_current_version_continues_with_existing_notice(tmp_pa
     conn = db.open_db(str(live))
     conn.close()
     api = Api("test")
-    monkeypatch.setattr(backup, "_run_backup_with_fallback", lambda *args, **kwargs: (False, False, "x", []))
+    monkeypatch.setattr(backup, "_run_backup_with_fallback", lambda *args, **kwargs: (False, False, "x", [], []))
 
     assert prepare_database(api, str(live)).outcome == "continue"
     assert api._backup_notice == "Today's backup couldn't be saved. Tried to write it to x."
+
+
+def test_launch_logs_leftover_cleanup_failures_without_a_notice(tmp_path, monkeypatch):
+    live = tmp_path / config.DB_FILENAME
+    conn = db.open_db(str(live))
+    conn.close()
+    api = Api("test")
+    logged = []
+    monkeypatch.setattr(api, "log", logged.append)
+    monkeypatch.setattr(
+        backup,
+        "_run_backup_with_fallback",
+        lambda *args, **kwargs: (True, False, "x", [], ["a.db-journal: PermissionError"]),
+    )
+
+    assert prepare_database(api, str(live)).outcome == "continue"
+    assert "Launch backup couldn't remove a leftover file: a.db-journal: PermissionError" in logged
+    assert api._backup_notice is None
 
 
 def test_pre_upgrade_snapshot_keeps_old_version_then_open_db_migrates(tmp_path):

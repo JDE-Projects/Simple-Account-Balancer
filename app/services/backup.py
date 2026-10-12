@@ -23,7 +23,7 @@ BACKUP_FILENAME_RE = re.compile(
     r"^balancer_(?:prerestore_)?([0-9]{8})_([0-9]{6})(?:_([0-9]{6}))?\.db\Z"
 )
 BACKUP_CANDIDATE_FILENAME_RE = re.compile(
-    r"^\.balancer_backup_candidate_[0-9a-f]{32}\.db\Z", re.ASCII
+    r"^\.balancer_backup_candidate_[0-9a-f]{32}\.db(?:-journal)?\Z", re.ASCII
 )
 
 
@@ -114,18 +114,32 @@ def _new_backup_path(backups_dir: str, prefix: str) -> str:
             return dest
 
 
-def _remove_stale_backup_candidates(backups_dir: str) -> None:
-    """Best-effort removal of candidate files left by an interrupted backup."""
+def _remove_stale_backup_candidates(backups_dir: str) -> list:
+    """Remove candidate files left by an interrupted backup. Each file is
+    matched on its own, so a journal whose database is already gone is
+    still retried. Returns "name: error type" for each file that couldn't
+    be removed; the backup goes ahead either way."""
     try:
         names = os.listdir(backups_dir)
-    except Exception:
-        return
+    except Exception as e:
+        return [f"backup folder listing: {type(e).__name__}"]
+    failures = []
     for name in names:
-        if BACKUP_CANDIDATE_FILENAME_RE.fullmatch(name):
-            try:
-                db._remove_db_artifacts(os.path.join(backups_dir, name))
-            except Exception:
-                pass
+        if not BACKUP_CANDIDATE_FILENAME_RE.fullmatch(name):
+            continue
+        try:
+            os.remove(os.path.join(backups_dir, name))
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            failures.append(f"{name}: {type(e).__name__}")
+    return failures
+
+
+def _log_cleanup_failures(api, when: str, cleanup_failed: list) -> None:
+    """Log each leftover candidate file a backup couldn't remove."""
+    for failure in cleanup_failed:
+        api.log(f"{when} backup couldn't remove a leftover file: {failure}")
 
 
 def _candidate_is_valid(candidate_path: str) -> bool:
@@ -153,14 +167,16 @@ def _make_backup(
     """Stage and validate a regular database backup before publishing it,
     then keep only the newest `keep` regular backups. Pre-restore safety
     backups are a separate pool; see _make_prerestore_backup. Returns
-    (success, filenames the prune couldn't delete)."""
+    (success, filenames the prune couldn't delete, leftover candidate files
+    that couldn't be removed)."""
     candidate_path = None
+    cleanup_failed = []
     src = source_conn
     owns_src = source_conn is None
     dst = None
     try:
         os.makedirs(backups_dir, exist_ok=True)
-        _remove_stale_backup_candidates(backups_dir)
+        cleanup_failed = _remove_stale_backup_candidates(backups_dir)
         candidate_path = os.path.join(
             backups_dir, f".balancer_backup_candidate_{uuid.uuid4().hex}.db"
         )
@@ -183,16 +199,16 @@ def _make_backup(
                 pass
         if candidate_path is not None:
             db._remove_db_artifacts(candidate_path)
-        return False, []
+        return False, [], cleanup_failed
     if owns_src and src is not None:
         try:
             src.close()
         except Exception:
             db._remove_db_artifacts(candidate_path)
-            return False, []
+            return False, [], cleanup_failed
     if not _candidate_is_valid(candidate_path):
         db._remove_db_artifacts(candidate_path)
-        return False, []
+        return False, [], cleanup_failed
     while True:
         try:
             os.rename(candidate_path, _new_backup_path(backups_dir, "balancer_"))
@@ -201,8 +217,8 @@ def _make_backup(
             continue
         except Exception:
             db._remove_db_artifacts(candidate_path)
-            return False, []
-    return True, _prune_backups(backups_dir, keep)
+            return False, [], cleanup_failed
+    return True, _prune_backups(backups_dir, keep), cleanup_failed
 
 def _make_prerestore_backup(
     db_path: str, backups_dir: str, source_conn: sqlite3.Connection | None = None
@@ -272,7 +288,7 @@ def _run_backup_with_fallback(
     default local folder for just this backup; the pref is left alone since
     the folder (e.g. a NAS) may only be temporarily offline. Never raises.
     Returns (success, used_fallback, actual_dir, filenames the prune
-    couldn't delete)."""
+    couldn't delete, leftover candidate files that couldn't be removed)."""
     default_dir = os.path.join(paths.app_dir(), config.BACKUP_DIRNAME)
     try:
         prefs_data = prefs.load_prefs()
@@ -282,10 +298,12 @@ def _run_backup_with_fallback(
         if is_custom and not (os.path.isdir(target_dir) and utils._writable_check(target_dir)):
             target_dir = default_dir
             used_fallback = True
-        ok, prune_failed = _make_backup(db_path, target_dir, keep, source_conn=source_conn)
-        return ok, used_fallback, target_dir, prune_failed
+        ok, prune_failed, cleanup_failed = _make_backup(
+            db_path, target_dir, keep, source_conn=source_conn
+        )
+        return ok, used_fallback, target_dir, prune_failed, cleanup_failed
     except Exception:
-        return False, False, default_dir, []
+        return False, False, default_dir, [], []
 
 
 def choose_backup_folder(api):

@@ -40,7 +40,7 @@ def prepare_database(api, db_path: str) -> StartupResult:
     try:
         # Launch backup precedes open_db after recovery, so it remains a
         # pre-migration snapshot while SQLite has already resolved any hot journal.
-        ok, used_fallback, actual_dir, prune_failed = backup._run_backup_with_fallback(
+        ok, used_fallback, actual_dir, prune_failed, cleanup_failed = backup._run_backup_with_fallback(
             db_path, source_conn=recovery.conn
         )
     finally:
@@ -53,6 +53,7 @@ def prepare_database(api, db_path: str) -> StartupResult:
         api.log(f"Launch backup failed, tried {folder_kind}")
     if used_fallback:
         api.log("Backup folder unreachable at launch, used the fallback folder")
+    backup._log_cleanup_failures(api, "Launch", cleanup_failed)
     if not ok:
         api._add_backup_notice(f"Today's backup couldn't be saved. Tried to write it to {actual_dir}.")
     elif used_fallback:
