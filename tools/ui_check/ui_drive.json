@@ -52,6 +52,11 @@
       "script": "tools/ui_check/date_ranges.js",
       "fixture": "tools/ui_check/fixture_date_ranges.py",
       "timeout_s": 120
+    },
+    "balance-warning": {
+      "script": "tools/ui_check/balance_warning.js",
+      "fixture": "tools/ui_check/fixture_balance_warning.py",
+      "timeout_s": 180
     }
   }
 }
