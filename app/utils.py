@@ -83,6 +83,12 @@ def parse_iso_date(raw):
     return s, None
 
 
+def range_start_iso(days: int) -> str:
+    """First date of a "last N days" range. Today counts as day one, so the
+    range covers exactly N calendar dates: today and the N - 1 before it."""
+    return (datetime.date.today() - datetime.timedelta(days=days - 1)).isoformat()
+
+
 def advance_one_month(iso_date: str, anchor_day: int) -> str:
     """Return iso_date advanced by one calendar month, re-anchored to
     anchor_day and clamped to that month's length so a day-31 anchor still

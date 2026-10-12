@@ -12,6 +12,7 @@ BACKUP_KEEP_MAX = 50
 PRERESTORE_KEEP = 3
 SCHEMA_VERSION = 3
 DEFAULT_RANGE_DAYS = 30
+COMPARE_RANGE_DAYS = 90
 
 # Enforced window minimum, read by create_window's min_size.
 MIN_WINDOW_W = 680

@@ -47,7 +47,7 @@ def get_transactions(api, account_id=None, from_date=None, to_date=None, search=
         current_balance_cents = computed[-1]["balance_cents"] if computed else account["starting_balance_cents"]
         from_s = (from_date or "").strip()
         if not from_s:
-            from_s = (datetime.date.today() - datetime.timedelta(days=config.DEFAULT_RANGE_DAYS)).isoformat()
+            from_s = utils.range_start_iso(config.DEFAULT_RANGE_DAYS)
         to_s = (to_date or "").strip()
         visible = [row for row in computed if row["date"] >= from_s]
         if to_s:

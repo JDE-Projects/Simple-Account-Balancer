@@ -1226,9 +1226,11 @@ function todayIso(){
   const d = new Date();
   return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
 }
-function isoMinusDays(n){
+/* First date of a "last N days" range. Today counts as day one, so the
+   range covers exactly N calendar dates (matches utils.range_start_iso). */
+function rangeStartIso(n){
   const d = new Date();
-  d.setDate(d.getDate() - n);
+  d.setDate(d.getDate() - (n - 1));
   return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
 }
 /* Dates are stored and passed around as ISO (YYYY-MM-DD); only the
@@ -1354,7 +1356,7 @@ function attachSuggest(input, getItems, onPick, opts){
 /* ---------- shared date-range control (register / Compare / CSV export) ----------
    createRangeControl(container, onChange, opts): renders presets + a Custom
    from/to pair into container, emits {from, to, label} on every change.
-   Presets: from = today minus N days, no upper bound. Custom: both ends.
+   Presets: the last N dates counting today, no upper bound. Custom: both ends.
    opts.allowAll (used only by CSV export) adds an "All history" choice
    ahead of the presets and makes it the default; it emits {from:null, to:null}. */
 function createRangeControl(container, onChange, opts){
@@ -1399,12 +1401,12 @@ function createRangeControl(container, onChange, opts){
       onChange({ from: null, to: null, label: "All history" });
     } else {
       const preset = PRESETS.find(p => p.key === sel.value);
-      onChange({ from: isoMinusDays(preset.days), to: null, label: preset.label });
+      onChange({ from: rangeStartIso(preset.days), to: null, label: preset.label });
     }
   }
   sel.addEventListener("change", () => {
     if (sel.value === "custom"){
-      if (!fromInput.value) fromInput.value = isoMinusDays(30);
+      if (!fromInput.value) fromInput.value = rangeStartIso(30);
       if (!toInput.value) toInput.value = todayIso();
       customWrap.style.display = "flex";
     } else {
@@ -1415,7 +1417,7 @@ function createRangeControl(container, onChange, opts){
   fromInput.addEventListener("change", emit);
   toInput.addEventListener("change", emit);
   container.querySelector(".range-reset").addEventListener("click", () => {
-    fromInput.value = isoMinusDays(Number(defaultDays));
+    fromInput.value = rangeStartIso(Number(defaultDays));
     toInput.value = todayIso();
     emit();
   });

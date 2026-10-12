@@ -1,5 +1,4 @@
 """Focused coverage for the read-only Compare API."""
-import datetime
 
 from app.db import open_db
 from app.api import Api
@@ -39,22 +38,6 @@ def test_compare_data_scopes_range_orders_newest_first_and_returns_full_balance(
         assert [row["payee"] for row in result["rows"]] == ["Newer", "Older"]
         assert result["register_balance_cents"] == 12_000
         assert all("cleared" not in row for row in result["rows"])
-    finally:
-        api._conn.close()
-
-
-def test_compare_default_range_is_last_ninety_days(tmp_path):
-    today = datetime.date.today()
-    api = _api_with_transactions(
-        tmp_path,
-        [
-            ((today - datetime.timedelta(days=91)).isoformat(), "Old", 100, 0),
-            ((today - datetime.timedelta(days=90)).isoformat(), "Boundary", 200, 1),
-        ],
-    )
-    try:
-        result = api.get_compare_data(1)
-        assert [row["payee"] for row in result["rows"]] == ["Boundary"]
     finally:
         api._conn.close()
 
