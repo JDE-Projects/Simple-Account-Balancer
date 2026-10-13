@@ -89,3 +89,20 @@ def test_compare_default_range_is_last_ninety_dates(tmp_path, monkeypatch):
         assert [row["date"] for row in result["rows"]] == [TODAY, first_included]
     finally:
         api._conn.close()
+
+
+def test_compare_finder_default_range_is_last_ninety_dates(tmp_path, monkeypatch):
+    _freeze_today(monkeypatch)
+    days = config.COMPARE_RANGE_DAYS
+    first_included = _days_before(days - 1)
+    first_excluded = _days_before(days)
+    api = _api_with_dates(tmp_path, [first_excluded, first_included, TODAY])
+    try:
+        # Every row is $1.00, so a $2.00 search pairs any two rows in range.
+        result = api.find_compare_matches(1, "2.00")
+        assert result["ok"] is True
+        assert [
+            sorted(row["date"] for row in combo) for combo in result["combinations"]
+        ] == [[first_included, TODAY]]
+    finally:
+        api._conn.close()
