@@ -58,6 +58,13 @@ Two ways to get it from the [Releases](../../releases) page - pick one:
 - **Portable .zip:** download `SimpleAccountBalancer-vX.Y.Z.zip`, extract it, and run
   `Simple Account Balancer.exe` from inside the extracted folder. No install - good for
   a locked-down PC or a USB stick. Keep the folder together.
+
+Or install the same installer from the command line with WinGet:
+
+```
+winget install --exact --id JDE-Projects.SimpleAccountBalancer
+```
+
 Windows only, no Python or setup required. Unsigned, so SmartScreen may warn the
 first time: More info > Run anyway.
 
@@ -67,6 +74,7 @@ Simple Account Balancer doesn't update itself. The bottom bar has a **Check for 
 
 - **Installer:** download the new `SimpleAccountBalancer-vX.Y.Z-setup.exe` and run it. It installs over your current copy and keeps your database, backups, and settings.
 - **Portable .zip:** download and extract the new `SimpleAccountBalancer-vX.Y.Z.zip`. Copy `simple_account_balancer.db`, the `backups` folder, and `simple_account_balancer.pref` from the old folder into the new one to keep your data and settings.
+- **WinGet:** run `winget upgrade --exact --id JDE-Projects.SimpleAccountBalancer`. It runs the installer over your current copy, same as above. The WinGet listing can trail a new release by a few days while Microsoft reviews it.
 
 There are no stored secrets, so that's all you need to carry over.
 
