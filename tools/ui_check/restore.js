@@ -27,6 +27,13 @@ export default async function restore(helpers) {
   check("oldest planted backup sorts last", listed[listed.length - 1] === fixture.real[0], JSON.stringify(listed));
   const tagCount = await evaluate("document.querySelectorAll('#restoreList .restore-row-tag').length");
   check("the pre-restore backup is tagged", tagCount === 1, String(tagCount));
+  // Not clicked: it opens the native file picker, which the driver can't reach.
+  const restoreFileReady = await evaluate(
+    "document.getElementById('restore-file-btn').offsetParent !== null && " +
+    "!document.getElementById('restore-file-btn').disabled && " +
+    "typeof api().choose_restore_file === 'function'"
+  );
+  check("Restore from a file button is shown, enabled, and wired to Python", restoreFileReady);
   await screenshot("restore-list");
 
   // b) a script-shaped filename, forced into the list as if the backend had

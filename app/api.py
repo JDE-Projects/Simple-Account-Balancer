@@ -2,9 +2,10 @@
 
 import sqlite3
 import threading
+import secrets
 from functools import wraps
 
-from app import paths, utils
+from app import db, paths, utils
 from app.debug_log import DebugLog
 from app.services import (
     accounts, autopays, backup, categories, compare, debug, export, restore, settings,
@@ -61,6 +62,7 @@ class Api:
         self._database_call_depth = 0
         self._database_failed = False
         self._db_path = None
+        self._restore_import = None
         self._debug_log = DebugLog(
             paths.app_dir(), "Simple Account Balancer",
             redact=utils.redact_log_text, on_warning=self._on_debug_log_warning,
@@ -272,6 +274,82 @@ class Api:
     @_database_call
     def restore_backup(self, filename, fingerprint=None):
         return restore.restore_backup(self, filename, fingerprint)
+
+    def choose_restore_file(self):
+        return restore.choose_restore_file(self)
+
+    def _clear_restore_import(self):
+        """Forget the held import after trying to delete its local copy."""
+        held = self._restore_import
+        self._restore_import = None
+        if held is None:
+            return []
+        return db._remove_db_artifacts(held["path"])
+
+    @_database_call
+    def _publish_restore_import(self, held_path, source_name, timestamp):
+        """Publish and preview a copied restore file while holding the database lock."""
+        cleanup_failures = self._clear_restore_import()
+        if cleanup_failures:
+            self.log("restore import couldn't discard an earlier temporary copy")
+        held = {
+            "token": secrets.token_hex(16),
+            "path": held_path,
+            "source_name": source_name,
+            "timestamp": timestamp,
+            "fingerprint": None,
+        }
+        self._restore_import = held
+        preview = restore._preview_restore_path(self, held_path, timestamp)
+        if not preview["ok"]:
+            cleanup_failures = self._clear_restore_import()
+            if cleanup_failures:
+                self.log("restore import couldn't clean up a failed temporary copy")
+            return preview
+        held["fingerprint"] = preview["fingerprint"]
+        preview["token"] = held["token"]
+        preview["source_name"] = source_name
+        return preview
+
+    @_database_call
+    def restore_from_file(self, token, fingerprint):
+        held = self._restore_import
+        if (
+            held is None
+            or token != held["token"]
+            or not isinstance(fingerprint, str)
+            or not fingerprint
+            or fingerprint != held["fingerprint"]
+        ):
+            return {"ok": False, "error": "That file selection expired. Choose the file again."}
+        try:
+            result = restore._restore_from_path(self, held["path"], fingerprint)
+        finally:
+            cleanup_failures = self._clear_restore_import()
+        if cleanup_failures:
+            self.log("restore import couldn't clean up its temporary copy")
+            message = "A temporary copy in the data folder couldn't be deleted."
+            if result["ok"]:
+                result["warning"] = " ".join(filter(None, (result.get("warning"), message)))
+            else:
+                result["error"] = f"{result['error']} {message}"
+        if not result["ok"]:
+            result["selection_cleared"] = True
+        return result
+
+    @_database_call
+    def discard_restore_file(self, token):
+        held = self._restore_import
+        if held is None or token != held["token"]:
+            return {"ok": True}
+        cleanup_failures = self._clear_restore_import()
+        if cleanup_failures:
+            self.log("restore import couldn't discard its temporary copy")
+            return {
+                "ok": True,
+                "warning": "A temporary copy in the data folder couldn't be deleted.",
+            }
+        return {"ok": True}
 
     # --- misc bridge helpers --------------------------------------------------
     def open_url(self, url: str):

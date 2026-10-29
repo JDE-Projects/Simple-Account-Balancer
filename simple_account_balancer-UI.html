@@ -926,6 +926,7 @@ table.register tr.compare-flash { animation:compareFlash 1.2s ease; }
         <div class="restore-list" id="restoreList"></div>
         <div class="err" id="restore-list-err"></div>
         <div class="m-foot">
+          <button class="btn" id="restore-file-btn" onclick="restoreFromFileClick()">Restore from a file&hellip;</button>
           <button class="btn" onclick="closeRestoreList()">Back</button>
         </div>
       </div>
@@ -1206,7 +1207,7 @@ let finderOpen = false;
 let accountMenuOpen = false;
 let exportRange = { from:null, to:null, label:null };
 let pendingDeleteAccountName = null;
-let RESTORE = { backups: [], preview: null, pendingFilename: null };
+let RESTORE = { backups: [], preview: null, pendingFilename: null, source: "list", token: null };
 
 /* ---------- autopays ---------- */
 let AUTOPAYS = [];
@@ -2186,6 +2187,7 @@ function openAccountModal(){
   $("acctModalScrim").classList.add("open");
 }
 function closeAccountModal(){
+  discardHeldRestoreFile();
   $("acctModalScrim").classList.remove("open");
 }
 /* Reads a starting balance the way Python's parse_amount_to_cents does
@@ -2431,11 +2433,21 @@ async function onBackupKeepChange(){
 
 /* ---------- restore from backup ---------- */
 function resetRestoreScreens(){
+  discardHeldRestoreFile();
   $("amScreenRestoreList").style.display = "none";
   $("amScreenRestoreConfirm").style.display = "none";
   $("amScreenEdit").style.display = "block";
   RESTORE.preview = null;
   RESTORE.pendingFilename = null;
+  RESTORE.source = "list";
+}
+function discardHeldRestoreFile(){
+  const token = RESTORE.token;
+  RESTORE.token = null;
+  if (!token || !api()) return;
+  api().discard_restore_file(token).then(r => {
+    if (r && r.warning) showBackupNotice(r.warning);
+  });
 }
 function formatBackupDate(iso){
   const d = new Date(iso);
@@ -2443,13 +2455,16 @@ function formatBackupDate(iso){
   return d.toLocaleString([], { year:"numeric", month:"long", day:"numeric", hour:"numeric", minute:"2-digit" });
 }
 function openRestoreList(){
+  discardHeldRestoreFile();
   RESTORE.preview = null;
   RESTORE.pendingFilename = null;
+  RESTORE.source = "list";
   $("amScreenEdit").style.display = "none";
   $("amScreenRestoreList").style.display = "block";
   loadRestoreList();
 }
 function closeRestoreList(){
+  discardHeldRestoreFile();
   $("amScreenRestoreList").style.display = "none";
   $("amScreenEdit").style.display = "block";
 }
@@ -2503,6 +2518,33 @@ async function previewRestoreClick(filename){
   }
   RESTORE.preview = r;
   RESTORE.pendingFilename = filename;
+  RESTORE.source = "list";
+  $("restore-confirm-msg").innerHTML = buildRestoreConfirmHtml(r);
+  $("restore-confirm-err").textContent = "";
+  $("amScreenRestoreList").style.display = "none";
+  $("amScreenRestoreConfirm").style.display = "block";
+}
+async function restoreFromFileClick(){
+  const errEl = $("restore-list-err");
+  const button = $("restore-file-btn");
+  errEl.textContent = "";
+  if (!api()) return;
+  button.disabled = true;
+  let r;
+  try {
+    r = await api().choose_restore_file();
+  } finally {
+    button.disabled = false;
+  }
+  if (!r || r.cancelled) return;
+  if (!r.ok){
+    errEl.textContent = r.error || "Couldn't read that backup.";
+    return;
+  }
+  RESTORE.preview = r;
+  RESTORE.pendingFilename = null;
+  RESTORE.source = "file";
+  RESTORE.token = r.token;
   $("restore-confirm-msg").innerHTML = buildRestoreConfirmHtml(r);
   $("restore-confirm-err").textContent = "";
   $("amScreenRestoreList").style.display = "none";
@@ -2545,23 +2587,36 @@ function buildRestoreConfirmHtml(preview){
   lines.push(preview.autopays === "same"
     ? "<strong>Autopays</strong>: no differences."
     : "<strong>Autopays</strong>: will change back to the backup's version.");
-  return `<strong>Restore the backup from ${esc(dateStr)}?</strong>` +
+  const heading = RESTORE.source === "file"
+    ? `Restore <strong>${esc(preview.source_name)}</strong>, saved ${esc(dateStr)}?`
+    : `<strong>Restore the backup from ${esc(dateStr)}?</strong>`;
+  return heading +
     `<span class="m-detail">Compared to your current register:<br>${lines.join("<br>")}</span>` +
     `<span class="m-detail">Your current register will be backed up first, so this can be undone.</span>`;
 }
 function cancelRestoreConfirm(){
+  discardHeldRestoreFile();
   $("amScreenRestoreConfirm").style.display = "none";
   $("amScreenRestoreList").style.display = "block";
 }
 async function confirmRestore(){
-  if (!RESTORE.pendingFilename || !api()) return;
+  if ((!RESTORE.pendingFilename && RESTORE.source !== "file") || !api()) return;
   const errEl = $("restore-confirm-err");
   errEl.textContent = "";
-  const r = await api().restore_backup(RESTORE.pendingFilename, RESTORE.preview && RESTORE.preview.fingerprint);
+  const r = RESTORE.source === "file"
+    ? await api().restore_from_file(RESTORE.token, RESTORE.preview && RESTORE.preview.fingerprint)
+    : await api().restore_backup(RESTORE.pendingFilename, RESTORE.preview && RESTORE.preview.fingerprint);
   if (!r || !r.ok){
     errEl.textContent = (r && r.error) || "Couldn't restore that backup.";
+    if (r && r.selection_cleared){
+      RESTORE.token = null;
+      $("amScreenRestoreConfirm").style.display = "none";
+      $("restore-list-err").textContent = r.error || "Couldn't restore that backup.";
+      $("amScreenRestoreList").style.display = "block";
+    }
     return;
   }
+  RESTORE.token = null;
   applyConfig(r);
   closeAccountModal();
   await Promise.all([refreshForActiveAccount(), refreshCategories()]);

@@ -4,16 +4,19 @@ import datetime
 import hashlib
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import tempfile
 import uuid
 
+import webview
+
 from app import config, db, utils
 from app.services import backup
 
 RESTORE_TEMP_FILENAME_RE = re.compile(
-    r"^\.balancer_(?:restore_stage|restore_rollback|save_snapshot)_[A-Za-z0-9_]+\.db(?:-journal)?\Z"
+    r"^\.balancer_(?:restore_stage|restore_rollback|restore_import|save_snapshot)_[A-Za-z0-9_]+\.db(?:-journal)?\Z"
 )
 
 
@@ -396,6 +399,17 @@ def preview_restore(api, filename):
         full_path, err = api._validate_backup_filename(filename)
         if err:
             return {"ok": False, "error": err}
+        return _preview_restore_path(
+            api, full_path, backup._parse_backup_timestamp(os.path.basename(full_path), full_path)
+        )
+    except Exception as e:
+        api.log(f"preview_restore failed: {e}")
+        return {"ok": False, "error": "Couldn't read that backup file."}
+
+
+def _preview_restore_path(api, full_path, display_timestamp):
+    """Compare a validated backup path against the live database."""
+    try:
         db_dir = os.path.dirname(os.path.abspath(api._db_path))
         staged_path, err, detail = _stage_backup(full_path, db_dir)
         if err:
@@ -413,9 +427,8 @@ def preview_restore(api, filename):
             cleanup_failures = db._remove_db_artifacts(staged_path)
             if cleanup_failures:
                 api.log("preview_restore couldn't clean up its staged backup")
-        timestamp = backup._parse_backup_timestamp(os.path.basename(full_path), full_path)
         return {
-            "ok": True, "timestamp": timestamp, "accounts": accounts_diff,
+            "ok": True, "timestamp": display_timestamp, "accounts": accounts_diff,
             "categories": categories, "autopays": autopays,
             "fingerprint": _file_sha256(full_path),
         }
@@ -431,6 +444,15 @@ def restore_backup(api, filename, fingerprint=None):
         full_path, err = api._validate_backup_filename(filename)
         if err:
             return {"ok": False, "error": err}
+        return _restore_from_path(api, full_path, fingerprint)
+    except Exception as e:
+        api.log(f"restore_backup failed: {e}")
+        return {"ok": False, "error": "Couldn't restore that backup."}
+
+
+def _restore_from_path(api, full_path, fingerprint):
+    """Restore the live database from a prepared backup path."""
+    try:
         if fingerprint is not None and _file_sha256(full_path) != fingerprint:
             message = "That backup file changed since you previewed it. Open it again to see what it would change."
             api.log("restore_backup refused because the backup changed since preview")
@@ -554,3 +576,61 @@ def restore_backup(api, filename, fingerprint=None):
     except Exception as e:
         api.log(f"restore_backup failed: {e}")
         return {"ok": False, "error": "Couldn't restore that backup."}
+
+
+def choose_restore_file(api):
+    """Hold a picked backup copy locally, then preview it under the database lock."""
+    try:
+        documents_dir = os.path.join(os.path.expanduser("~"), "Documents")
+        start_dir = documents_dir if os.path.isdir(documents_dir) else None
+        selected = api._window.create_file_dialog(
+            webview.FileDialog.OPEN,
+            directory=start_dir,
+            allow_multiple=False,
+            file_types=("Backup Files (*.db)", "All files (*.*)"),
+        )
+        if not selected:
+            return {"ok": True, "cancelled": True}
+        picked = selected[0] if isinstance(selected, (list, tuple)) else selected
+        if not picked:
+            return {"ok": True, "cancelled": True}
+        try:
+            if os.path.samefile(picked, api._db_path):
+                return {"ok": False, "error": "That's the app's live database. Choose a backup file instead."}
+            journal_path = api._db_path + "-journal"
+            if os.path.exists(journal_path) and os.path.samefile(picked, journal_path):
+                return {"ok": False, "error": "That's the app's live database. Choose a backup file instead."}
+        except FileNotFoundError:
+            return {"ok": False, "error": "Couldn't read that file."}
+        except Exception as error:
+            api.log(f"choose_restore_file identity check failed: {type(error).__name__}")
+            return {"ok": False, "error": "Couldn't read that file."}
+        try:
+            with open(picked, "rb") as source:
+                if source.read(16) != b"SQLite format 3\x00":
+                    return {"ok": False, "error": "That file isn't a Simple Account Balancer backup."}
+            source_size = os.path.getsize(picked)
+            db_dir = os.path.dirname(os.path.abspath(api._db_path))
+            if shutil.disk_usage(db_dir).free < source_size * 5:
+                return {"ok": False, "error": "There isn't enough free disk space to restore that backup."}
+            held_path = os.path.join(
+                db_dir, f".balancer_restore_import_{secrets.token_hex(16)}.db"
+            )
+            try:
+                shutil.copyfile(picked, held_path)
+                os.utime(held_path, (os.path.getatime(picked), os.path.getmtime(picked)))
+            except Exception as error:
+                cleanup_failures = db._remove_db_artifacts(held_path)
+                if cleanup_failures:
+                    api.log("choose_restore_file couldn't clean up partial copy")
+                api.log(f"choose_restore_file copy failed: {type(error).__name__}")
+                return {"ok": False, "error": "Couldn't copy that file. Nothing was changed."}
+            return api._publish_restore_import(
+                held_path, os.path.basename(picked), backup._parse_backup_timestamp(os.path.basename(picked), held_path)
+            )
+        except Exception as error:
+            api.log(f"choose_restore_file read failed: {type(error).__name__}")
+            return {"ok": False, "error": "Couldn't read that file."}
+    except Exception as error:
+        api.log(f"choose_restore_file failed: {type(error).__name__}")
+        return {"ok": False, "error": "Couldn't read that file."}
