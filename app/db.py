@@ -196,6 +196,11 @@ def _readonly_connection(path: str) -> sqlite3.Connection:
     return conn
 
 
+def has_accounts(conn: sqlite3.Connection) -> bool:
+    """Return whether the database contains at least one account."""
+    return conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone() is not None
+
+
 def _readwrite_connection(path: str, timeout: float = 5.0) -> sqlite3.Connection:
     uri = "file:" + urllib.parse.quote(path.replace("\\", "/")) + "?mode=rw"
     conn = sqlite3.connect(uri, uri=True, timeout=timeout)
