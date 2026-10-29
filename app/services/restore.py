@@ -465,15 +465,45 @@ def _restore_from_path(api, full_path, fingerprint):
             api.log(f"restore_backup staging failed: {detail}")
             return {"ok": False, "error": err}
 
-        prerestore_path, prune_failed = backup._make_prerestore_backup(
-            db_path, backups_dir, api._conn
-        )
-        if prerestore_path is None:
+        try:
+            live_has_accounts = db.has_accounts(api._conn)
+        except Exception as e:
+            live_has_accounts = True
+            api.log(f"restore_backup couldn't check live accounts; taking a safety backup: {e}")
+        try:
+            staged_conn = db._readonly_connection(staged_path)
+            try:
+                staged_has_accounts = db.has_accounts(staged_conn)
+            finally:
+                staged_conn.close()
+        except Exception as e:
             cleanup_failures = db._remove_db_artifacts(staged_path)
-            api.log("restore_backup cancelled because its safety backup failed")
+            api.log(f"restore_backup couldn't check staged backup accounts: {e}")
             if cleanup_failures:
                 api.log("restore_backup couldn't clean up its staged backup")
-            return {"ok": False, "error": "Couldn't take a safety backup, so the restore was cancelled."}
+            return {"ok": False, "error": "Couldn't read that backup file."}
+
+        if not live_has_accounts and not staged_has_accounts:
+            cleanup_failures = db._remove_db_artifacts(staged_path)
+            api.log("restore_backup refused an empty backup for an empty live database")
+            if cleanup_failures:
+                api.log("restore_backup couldn't clean up its staged backup")
+            return {"ok": False, "error": "That backup has no accounts in it."}
+
+        prerestore_path = None
+        prune_failed = []
+        if live_has_accounts:
+            prerestore_path, prune_failed = backup._make_prerestore_backup(
+                db_path, backups_dir, api._conn
+            )
+            if prerestore_path is None:
+                cleanup_failures = db._remove_db_artifacts(staged_path)
+                api.log("restore_backup cancelled because its safety backup failed")
+                if cleanup_failures:
+                    api.log("restore_backup couldn't clean up its staged backup")
+                return {"ok": False, "error": "Couldn't take a safety backup, so the restore was cancelled."}
+        else:
+            api.log("restore skipped the safety backup: no accounts in the live database")
 
         rollback_path, err = _make_rollback_copy(api._conn, db_dir)
         if err:
@@ -537,12 +567,18 @@ def _restore_from_path(api, full_path, fingerprint):
                 )
                 if cleanup_failures:
                     api.log("restore_backup couldn't clean up temporary restore files")
-                return {
-                    "ok": False,
-                    "error": (
+                error = (
+                    "The restore couldn't be finished. Close the app and open it again. "
+                    "Your backup file was not changed."
+                    if prerestore_path is None
+                    else (
                         "The restore failed and the app couldn't put your data back. "
                         f"Recover it manually from this safety backup: {prerestore_path}"
-                    ),
+                    )
+                )
+                return {
+                    "ok": False,
+                    "error": error,
                 }
             try:
                 api.set_conn(db.open_db(db_path))
@@ -554,14 +590,24 @@ def _restore_from_path(api, full_path, fingerprint):
             api.log(f"restore_backup failed after replacement; live data was put back: {e}")
             if cleanup_failures:
                 api.log("restore_backup couldn't clean up temporary restore files")
-            return {"ok": False, "error": "The restore failed and your data was put back."}
+            error = (
+                "The restore couldn't be finished. Close the app and open it again. "
+                "Your backup file was not changed."
+                if prerestore_path is None and api._conn is None
+                else (
+                    "The restore failed. Nothing was changed, so you can try again."
+                    if prerestore_path is None
+                    else "The restore failed and your data was put back."
+                )
+            )
+            return {"ok": False, "error": error}
 
         rollback_cleanup_failed = bool(db._remove_db_artifacts(rollback_path))
         if rollback_cleanup_failed:
             api.log("restore_backup completed but couldn't clean up its local rollback copy")
         api.log(
             f"Restored from backup {os.path.basename(full_path)} "
-            f"(safety backup: {os.path.basename(prerestore_path)})"
+            f"(safety backup: {os.path.basename(prerestore_path) if prerestore_path else 'none, no accounts'})"
         )
         result = api.get_config()
         warnings = []

@@ -29,6 +29,10 @@ export default async function smoke(helpers) {
 
   // b) first-run setup, filled in by typing.
   await waitFor("document.getElementById('firstrunWrap').style.display !== 'none'", 10000);
+  const firstRunRestoreVisible = await evaluate(
+    "document.getElementById('fr-restore-btn').offsetParent !== null"
+  );
+  check("first-run Restore from a backup button is visible", firstRunRestoreVisible);
   await type("#fr-name", "Checking");
   await type("#fr-balance", "500.00");
   // fr-date is a native <input type="date">: type() fills it with real

@@ -711,6 +711,7 @@ table.register tr.compare-flash { animation:compareFlash 1.2s ease; }
       <div class="err" id="fr-err"></div>
       <div class="foot">
         <button class="btn primary" onclick="createAccount()">Get started</button>
+        <button class="btn" id="fr-restore-btn" onclick="firstRunRestoreClick()">Restore from a backup&hellip;</button>
       </div>
     </div>
   </div>
@@ -1101,6 +1102,19 @@ table.register tr.compare-flash { animation:compareFlash 1.2s ease; }
       <div class="m-foot">
         <button class="btn" onclick="closeDeleteModal()">Cancel</button>
         <button class="btn danger" onclick="confirmDelete()">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- first-run restore confirm modal -->
+  <div class="modal-scrim" id="firstRunRestoreModalScrim">
+    <div class="modal">
+      <h3>Restore from a backup</h3>
+      <div class="m-msg" id="frr-msg"></div>
+      <div class="err" id="frr-err"></div>
+      <div class="m-foot">
+        <button class="btn" id="frr-cancel" onclick="cancelFirstRunRestore()">Cancel</button>
+        <button class="btn primary" id="frr-confirm" onclick="confirmFirstRunRestore()">Restore</button>
       </div>
     </div>
   </div>
@@ -2745,6 +2759,96 @@ function showFirstRunView(){
   $("fr-date").value = todayIso();
   $("fr-name").focus();
 }
+async function firstRunRestoreClick(){
+  const errEl = $("fr-err");
+  const button = $("fr-restore-btn");
+  errEl.textContent = "";
+  if (!api()) return;
+  button.disabled = true;
+  let r;
+  try {
+    r = await api().choose_restore_file();
+  } catch (e) {
+    errEl.textContent = (e && e.message) || "Couldn't read that backup.";
+    return;
+  } finally {
+    button.disabled = false;
+  }
+  if (!r || r.cancelled) return;
+  if (!r.ok){
+    errEl.textContent = r.error || "Couldn't read that backup.";
+    return;
+  }
+  RESTORE.preview = r;
+  RESTORE.token = r.token;
+  RESTORE.source = "file";
+  RESTORE.pendingFilename = null;
+  if (r.accounts.length === 0){
+    discardHeldRestoreFile();
+    errEl.textContent = "That backup has no accounts in it.";
+    return;
+  }
+  $("frr-msg").innerHTML = buildFirstRunRestoreConfirmHtml(r);
+  $("frr-err").textContent = "";
+  $("firstRunRestoreModalScrim").classList.add("open");
+}
+function buildFirstRunRestoreConfirmHtml(preview){
+  const date = esc(formatBackupDate(preview.timestamp));
+  const accounts = preview.accounts.map(account => {
+    const count = esc(account.count);
+    const txWord = account.count === 1 ? "transaction" : "transactions";
+    return `${esc(account.name)} (${count} ${txWord})`;
+  });
+  return `Restore <strong>${esc(preview.source_name)}</strong>, saved ${date}?` +
+    `<span class="m-detail">It holds:<br>${accounts.join("<br>")}</span>`;
+}
+function closeFirstRunRestoreModal(){
+  $("firstRunRestoreModalScrim").classList.remove("open");
+}
+function cancelFirstRunRestore(){
+  closeFirstRunRestoreModal();
+  discardHeldRestoreFile();
+}
+async function confirmFirstRunRestore(){
+  if (!api()) return;
+  const errEl = $("frr-err");
+  const cancelButton = $("frr-cancel");
+  const confirmButton = $("frr-confirm");
+  errEl.textContent = "";
+  cancelButton.disabled = true;
+  confirmButton.disabled = true;
+  try {
+    const r = await api().restore_from_file(RESTORE.token, RESTORE.preview && RESTORE.preview.fingerprint);
+    if (!r || !r.ok){
+      const error = (r && r.error) || "Couldn't restore that backup.";
+      errEl.textContent = error;
+      if (r && r.selection_cleared){
+        RESTORE.token = null;
+        closeFirstRunRestoreModal();
+        $("fr-err").textContent = error;
+      }
+      return;
+    }
+    RESTORE.token = null;
+    closeFirstRunRestoreModal();
+    applyConfig(r);
+    showRegisterView();
+    await Promise.all([loadRegister(), refreshCategories(), refreshPayees()]);
+    if (r.warning) showBackupNotice(r.warning);
+  } catch (e) {
+    errEl.textContent = (e && e.message) || "Couldn't restore that backup.";
+  } finally {
+    cancelButton.disabled = false;
+    confirmButton.disabled = false;
+  }
+}
+document.addEventListener("keydown", event => {
+  // Ignored while a restore is running, so its result is never hidden.
+  if (event.key === "Escape" && $("firstRunRestoreModalScrim").classList.contains("open")
+      && !$("frr-confirm").disabled){
+    cancelFirstRunRestore();
+  }
+});
 
 /* ---------- manage categories modal ---------- */
 function openCategoryModal(){
