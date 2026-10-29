@@ -39,6 +39,7 @@ PUBLIC_API_SIGNATURES = [
     ("reorder_transactions", "(self, account_id, date, ordered_ids)"),
     ("reset_backup_folder", "(self)"),
     ("restore_backup", "(self, filename, fingerprint=None)"),
+    ("save_backup_copy", "(self)"),
     ("save_theme", "(self, theme: str)"),
     ("set_active_account", "(self, account_id)"),
     ("set_backup_keep", "(self, n)"),

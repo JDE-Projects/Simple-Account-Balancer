@@ -13,7 +13,7 @@ from app import config, db, utils
 from app.services import backup
 
 RESTORE_TEMP_FILENAME_RE = re.compile(
-    r"^\.balancer_restore_(?:stage|rollback)_[A-Za-z0-9_]+\.db(?:-journal)?\Z"
+    r"^\.balancer_(?:restore_stage|restore_rollback|save_snapshot)_[A-Za-z0-9_]+\.db(?:-journal)?\Z"
 )
 
 

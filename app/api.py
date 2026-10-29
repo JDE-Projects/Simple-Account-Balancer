@@ -222,6 +222,13 @@ class Api:
     def export_csv(self, account_id, from_date, to_date, range_label=""):
         return export.export_csv(self, account_id, from_date, to_date, range_label)
 
+    @_database_call
+    def _snapshot_for_backup_copy(self):
+        return backup._snapshot_for_backup_copy(self)
+
+    def save_backup_copy(self):
+        return backup.save_backup_copy(self)
+
     # --- preferences (local file, not stored in the db) ----------------------
     def _load_theme(self) -> str:
         return settings._load_theme(self)

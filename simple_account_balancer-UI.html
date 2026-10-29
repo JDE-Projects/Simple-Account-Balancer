@@ -881,7 +881,7 @@ table.register tr.compare-flash { animation:compareFlash 1.2s ease; }
 
         <div class="am-section">
           <div class="am-section-title">Backups</div>
-          <div class="am-hint">Backups run automatically when the app opens and closes.</div>
+          <div class="am-hint">Backups cover all accounts and run automatically when the app opens and closes. Save backup copies them to a place you pick, such as a USB drive.</div>
           <div class="am-backup-row">
             <span class="mono am-backup-path" id="am-backup-path">Not set</span>
             <button class="btn" onclick="chooseBackupFolder()">Change folder</button>
@@ -892,6 +892,8 @@ table.register tr.compare-flash { animation:compareFlash 1.2s ease; }
             <input id="am-backup-keep" type="number" min="1" max="50" class="mono am-keep-input" onchange="onBackupKeepChange()">
             <span class="am-keep-label">backups</span>
           </div>
+          <button type="button" class="btn" id="am-save-backup-btn" onclick="saveBackupCopyClick()">Save backup&hellip;</button>
+          <div class="am-hint" id="am-backup-status" style="display:none;"></div>
           <button type="button" class="btn" onclick="openRestoreList()">Restore from backup</button>
         </div>
 
@@ -2366,6 +2368,7 @@ function renderBackupSection(){
   $("am-backup-path").title = STATE.backupFolder || "";
   $("am-backup-reset-btn").style.display = STATE.backupFolderIsCustom ? "inline-block" : "none";
   $("am-backup-keep").value = STATE.backupKeep || 5;
+  $("am-backup-status").style.display = "none";
 }
 async function chooseBackupFolder(){
   if (!api()) return;
@@ -2378,6 +2381,26 @@ async function chooseBackupFolder(){
   STATE.backupFolder = r.backup_folder;
   STATE.backupFolderIsCustom = !!r.backup_folder_is_custom;
   renderBackupSection();
+}
+async function saveBackupCopyClick(){
+  if (!api()) return;
+  const button = $("am-save-backup-btn");
+  button.disabled = true;
+  $("am-backup-status").style.display = "none";
+  try {
+    const r = await api().save_backup_copy();
+    if (r && r.cancelled) return;
+    if (!r || !r.ok){
+      $("am-err").textContent = ((r && r.error) || "Couldn't save the backup.")
+        + ((r && r.cleanup_warning) ? ` ${r.cleanup_warning}` : "");
+      return;
+    }
+    $("am-err").textContent = "";
+    $("am-backup-status").textContent = "Backup saved." + (r.cleanup_warning ? ` ${r.cleanup_warning}` : "");
+    $("am-backup-status").style.display = "block";
+  } finally {
+    button.disabled = false;
+  }
 }
 async function resetBackupFolderClick(){
   if (!api()) return;

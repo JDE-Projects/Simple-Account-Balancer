@@ -557,6 +557,8 @@ def test_remove_stale_restore_files_only_matches_exact_restore_temp_names(tmp_pa
         ".balancer_restore_stage_abc_123.db-journal",
         ".balancer_restore_rollback_abc_123.db",
         ".balancer_restore_rollback_abc_123.db-journal",
+        ".balancer_save_snapshot_abc123.db",
+        ".balancer_save_snapshot_abc123.db-journal",
     ]
     untouched = [
         ".balancer_restore_other_abc.db",
