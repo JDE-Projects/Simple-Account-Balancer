@@ -120,9 +120,9 @@ def export_csv(api, account_id, from_date, to_date, range_label=""):
             csv.writer(f).writerows(
                 csv_export_rows(account_name, range_text, datetime.date.today().isoformat(), rows)
             )
-        api.log(f"Exported {len(rows)} transactions to CSV")
+        api._log(f"Exported {len(rows)} transactions to CSV")
         return {"ok": True, "path": path, "count": len(rows)}
     except Exception as e:
-        api.log(f"export_csv failed: {e}")
+        api._log(f"export_csv failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't export the CSV file."}
 

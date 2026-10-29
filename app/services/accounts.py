@@ -83,7 +83,7 @@ def get_config(api):
             "autopay_notice_is_error": api._autopay_notice_is_error,
         }
     except Exception as e:
-        api.log(f"get_config failed: {e}")
+        api._log(f"get_config failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't load the app's configuration."}
 
 
@@ -111,11 +111,11 @@ def create_account(api, name, starting_balance, starting_date):
         prefs_data = prefs.load_prefs()
         prefs_data["active_account_id"] = new_id
         if not prefs.save_prefs(prefs_data):
-            api.log("Could not save active account pref")
-        api.log(f"Account {new_id} created, starting as of {date_s}")
+            api._log("Could not save active account pref")
+        api._log(f"Account {new_id} created, starting as of {date_s}")
         return api.get_config()
     except Exception as e:
-        api.log(f"create_account failed: {e}")
+        api._log(f"create_account failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't create the account."}
 
 
@@ -128,11 +128,11 @@ def set_active_account(api, account_id):
         prefs_data = prefs.load_prefs()
         prefs_data["active_account_id"] = account["id"]
         if not prefs.save_prefs(prefs_data):
-            api.log("Could not save active account pref")
-        api.log(f"Active account set to {account['id']}")
+            api._log("Could not save active account pref")
+        api._log(f"Active account set to {account['id']}")
         return api.get_config()
     except Exception as e:
-        api.log(f"set_active_account failed: {e}")
+        api._log(f"set_active_account failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't switch accounts."}
 
 
@@ -162,11 +162,11 @@ def delete_account(api, account_id):
             ).fetchone()
             prefs_data["active_account_id"] = remaining["id"] if remaining else None
             if not prefs.save_prefs(prefs_data):
-                api.log("Could not save active account pref")
-        api.log(f"Account {account['id']} deleted ({tx_count} transactions removed)")
+                api._log("Could not save active account pref")
+        api._log(f"Account {account['id']} deleted ({tx_count} transactions removed)")
         return api.get_config()
     except Exception as e:
-        api.log(f"delete_account failed: {e}")
+        api._log(f"delete_account failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't delete the account."}
 
 
@@ -201,9 +201,9 @@ def update_account(api, account_id, name, starting_balance, starting_date):
                 (name_s, cents, date_s, account["id"]),
             )
         api._conn.commit()
-        api.log(f"Account {account['id']} updated, starting as of {date_s}")
+        api._log(f"Account {account['id']} updated, starting as of {date_s}")
         return api.get_config()
     except Exception as e:
-        api.log(f"update_account failed: {e}")
+        api._log(f"update_account failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't update the account."}
 

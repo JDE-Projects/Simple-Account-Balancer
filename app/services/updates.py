@@ -8,7 +8,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from app import config
+from app import config, utils
 
 def _update_error_reason(exc: BaseException) -> str:
     """Turn a check_update exception into a short, plain-language reason to
@@ -105,11 +105,11 @@ def check_update(api):
         result["version"] = latest
         if latest and api._is_newer(latest, api._version):
             result["update"] = True
-        api.log(f"check_update: found v{latest}, current v{api._version}")
+        api._log(f"check_update: found v{latest}, current v{api._version}")
     except Exception as e:
         result["offline"] = True  # offline / private repo / rate-limited: stay quiet
         result["reason"] = _update_error_reason(e)
-        api.log(f"check_update failed: {type(e).__name__}: {e}")
+        api._log(f"check_update failed: {utils.describe_error(e)}")
     return result
 
 
@@ -130,7 +130,7 @@ def open_url(api, url: str):
         Only the JDE-Projects website is allowed (see _is_allowed_url)."""
     import webbrowser
     if not _is_allowed_url(url):
-        api.log("open_url refused an address outside the allowed site")
+        api._log("open_url refused an address outside the allowed site")
         return {"ok": False, "error": "That link isn't allowed."}
     webbrowser.open(url)
     return {"ok": True}

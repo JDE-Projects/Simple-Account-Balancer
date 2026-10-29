@@ -46,7 +46,7 @@ def _remove_stale_restore_files(db_dir: str) -> tuple:
     try:
         names = os.listdir(db_dir)
     except Exception as e:
-        return 0, [f"{db_dir}: {e}"]
+        return 0, [utils.describe_error(e)]
     for name in names:
         if not RESTORE_TEMP_FILENAME_RE.fullmatch(name):
             continue
@@ -93,7 +93,7 @@ def _find_launch_restore_backup(api, folders: list[str]) -> tuple:
         try:
             names = os.listdir(folder)
         except Exception as error:
-            api.log(f"Launch restore skipped unreadable backup folder {folder}: {error}")
+            api._log(f"Launch restore skipped an unreadable backup folder: {utils.describe_error(error)}")
             continue
         for name in names:
             if name.startswith("balancer_prerestore_") or not backup._is_backup_filename(name):
@@ -108,9 +108,9 @@ def _find_launch_restore_backup(api, folders: list[str]) -> tuple:
             return full_path, timestamp, newer_version_count
         if "newer version" in error:
             newer_version_count += 1
-            api.log(f"Launch restore skipped newer-version backup {full_path}: {error}")
+            api._log(f"Launch restore skipped newer-version backup {os.path.basename(full_path)}: {error}")
         else:
-            api.log(f"Launch restore skipped unusable backup {full_path}: {error}")
+            api._log(f"Launch restore skipped unusable backup {os.path.basename(full_path)}: {error}")
     return None, None, newer_version_count
 
 
@@ -163,10 +163,10 @@ def _return_damaged_journal(api, live_path: str, kept_path: str) -> None:
     try:
         os.rename(kept_path + "-journal", live_path + "-journal")
     except Exception as error:
-        api.log(
+        api._log(
             "Launch restore couldn't return the damaged database journal from "
             f"{os.path.basename(kept_path)}-journal to {os.path.basename(live_path)}-journal: "
-            f"{type(error).__name__}: {error}"
+            f"{utils.describe_error(error)}"
         )
 
 
@@ -180,10 +180,10 @@ def restore_damaged_database(api, full_path: str, live_path: str) -> tuple:
     try:
         staged_path, error, detail = _stage_backup(full_path, db_dir)
     except Exception as error:
-        api.log(f"Launch restore staging failed: {type(error).__name__}: {error}")
+        api._log(f"Launch restore staging failed: {utils.describe_error(error)}")
         return None, "The automatic restore couldn't be completed. Your data file was not changed."
     if error:
-        api.log(f"Launch restore staging failed: {detail}")
+        api._log(f"Launch restore staging failed: {detail}")
         return None, error
     journal_moved = False
     try:
@@ -193,7 +193,7 @@ def restore_damaged_database(api, full_path: str, live_path: str) -> tuple:
         staged_path = None
         return kept_path, None
     except Exception as error:
-        api.log(f"Launch restore failed before publishing the backup: {type(error).__name__}: {error}")
+        api._log(f"Launch restore failed before publishing the backup: {utils.describe_error(error)}")
         if journal_moved:
             _return_damaged_journal(api, live_path, kept_path)
         return None, "The automatic restore couldn't be completed. Your data file was not changed."
@@ -201,7 +201,7 @@ def restore_damaged_database(api, full_path: str, live_path: str) -> tuple:
         if staged_path is not None:
             cleanup_failures = db._remove_db_artifacts(staged_path)
             if cleanup_failures:
-                api.log("Launch restore couldn't clean up its staged backup")
+                api._log("Launch restore couldn't clean up its staged backup")
 
 
 def _file_sha256(path: str) -> str:
@@ -242,7 +242,7 @@ def _stage_backup(full_path: str, db_dir: str) -> tuple:
         return staged_path, None, None
     except Exception as e:
         cleanup_failures = db._remove_db_artifacts(staged_path) if staged_path else []
-        detail = f"{type(e).__name__}: {e}"
+        detail = utils.describe_error(e)
         if cleanup_failures:
             detail += " (couldn't clean up the failed staged backup)"
         return None, "Couldn't prepare that backup for restore. Nothing was changed.", detail
@@ -269,7 +269,7 @@ def _make_rollback_copy(conn: sqlite3.Connection, db_dir: str) -> tuple:
                 pass
         if rollback_path:
             db._remove_db_artifacts(rollback_path)
-        return None, str(e) or "Couldn't prepare the local rollback copy."
+        return None, utils.describe_error(e)
 
 
 def _validate_backup_filename(api, filename):
@@ -403,7 +403,7 @@ def preview_restore(api, filename):
             api, full_path, backup._parse_backup_timestamp(os.path.basename(full_path), full_path)
         )
     except Exception as e:
-        api.log(f"preview_restore failed: {e}")
+        api._log(f"preview_restore failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't read that backup file."}
 
 
@@ -413,7 +413,7 @@ def _preview_restore_path(api, full_path, display_timestamp):
         db_dir = os.path.dirname(os.path.abspath(api._db_path))
         staged_path, err, detail = _stage_backup(full_path, db_dir)
         if err:
-            api.log(f"preview_restore staging failed: {detail}")
+            api._log(f"preview_restore staging failed: {detail}")
             return {"ok": False, "error": err}
         try:
             backup_conn = db._readonly_connection(staged_path)
@@ -426,14 +426,14 @@ def _preview_restore_path(api, full_path, display_timestamp):
         finally:
             cleanup_failures = db._remove_db_artifacts(staged_path)
             if cleanup_failures:
-                api.log("preview_restore couldn't clean up its staged backup")
+                api._log("preview_restore couldn't clean up its staged backup")
         return {
             "ok": True, "timestamp": display_timestamp, "accounts": accounts_diff,
             "categories": categories, "autopays": autopays,
             "fingerprint": _file_sha256(full_path),
         }
     except Exception as e:
-        api.log(f"preview_restore failed: {e}")
+        api._log(f"preview_restore failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't read that backup file."}
 
 
@@ -446,7 +446,7 @@ def restore_backup(api, filename, fingerprint=None):
             return {"ok": False, "error": err}
         return _restore_from_path(api, full_path, fingerprint)
     except Exception as e:
-        api.log(f"restore_backup failed: {e}")
+        api._log(f"restore_backup failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't restore that backup."}
 
 
@@ -455,21 +455,21 @@ def _restore_from_path(api, full_path, fingerprint):
     try:
         if fingerprint is not None and _file_sha256(full_path) != fingerprint:
             message = "That backup file changed since you previewed it. Open it again to see what it would change."
-            api.log("restore_backup refused because the backup changed since preview")
+            api._log("restore_backup refused because the backup changed since preview")
             return {"ok": False, "error": message}
         db_path = api._db_path
         backups_dir, _ = backup.effective_backup_dir()
         db_dir = os.path.dirname(os.path.abspath(db_path))
         staged_path, err, detail = _stage_backup(full_path, db_dir)
         if err:
-            api.log(f"restore_backup staging failed: {detail}")
+            api._log(f"restore_backup staging failed: {detail}")
             return {"ok": False, "error": err}
 
         try:
             live_has_accounts = db.has_accounts(api._conn)
         except Exception as e:
             live_has_accounts = True
-            api.log(f"restore_backup couldn't check live accounts; taking a safety backup: {e}")
+            api._log(f"restore_backup couldn't check live accounts; taking a safety backup: {utils.describe_error(e)}")
         try:
             staged_conn = db._readonly_connection(staged_path)
             try:
@@ -478,16 +478,16 @@ def _restore_from_path(api, full_path, fingerprint):
                 staged_conn.close()
         except Exception as e:
             cleanup_failures = db._remove_db_artifacts(staged_path)
-            api.log(f"restore_backup couldn't check staged backup accounts: {e}")
+            api._log(f"restore_backup couldn't check staged backup accounts: {utils.describe_error(e)}")
             if cleanup_failures:
-                api.log("restore_backup couldn't clean up its staged backup")
+                api._log("restore_backup couldn't clean up its staged backup")
             return {"ok": False, "error": "Couldn't read that backup file."}
 
         if not live_has_accounts and not staged_has_accounts:
             cleanup_failures = db._remove_db_artifacts(staged_path)
-            api.log("restore_backup refused an empty backup for an empty live database")
+            api._log("restore_backup refused an empty backup for an empty live database")
             if cleanup_failures:
-                api.log("restore_backup couldn't clean up its staged backup")
+                api._log("restore_backup couldn't clean up its staged backup")
             return {"ok": False, "error": "That backup has no accounts in it."}
 
         prerestore_path = None
@@ -498,27 +498,27 @@ def _restore_from_path(api, full_path, fingerprint):
             )
             if prerestore_path is None:
                 cleanup_failures = db._remove_db_artifacts(staged_path)
-                api.log("restore_backup cancelled because its safety backup failed")
+                api._log("restore_backup cancelled because its safety backup failed")
                 if cleanup_failures:
-                    api.log("restore_backup couldn't clean up its staged backup")
+                    api._log("restore_backup couldn't clean up its staged backup")
                 return {"ok": False, "error": "Couldn't take a safety backup, so the restore was cancelled."}
         else:
-            api.log("restore skipped the safety backup: no accounts in the live database")
+            api._log("restore skipped the safety backup: no accounts in the live database")
 
         rollback_path, err = _make_rollback_copy(api._conn, db_dir)
         if err:
             cleanup_failures = db._remove_db_artifacts(staged_path)
-            api.log(f"restore_backup rollback snapshot failed: {err}")
+            api._log(f"restore_backup rollback snapshot failed: {err}")
             if cleanup_failures:
-                api.log("restore_backup couldn't clean up its staged backup")
+                api._log("restore_backup couldn't clean up its staged backup")
             return {"ok": False, "error": "Couldn't prepare a local rollback copy, so the restore was cancelled."}
 
         if not api.close_conn():
             cleanup_failures = db._remove_db_artifacts(staged_path)
             cleanup_failures += db._remove_db_artifacts(rollback_path)
-            api.log("restore_backup cancelled because the live database did not close")
+            api._log("restore_backup cancelled because the live database did not close")
             if cleanup_failures:
-                api.log("restore_backup couldn't clean up temporary restore files")
+                api._log("restore_backup couldn't clean up temporary restore files")
             return {"ok": False, "error": "Couldn't close the live database, so the restore was cancelled."}
 
         if os.path.exists(db_path + "-journal"):
@@ -526,12 +526,12 @@ def _restore_from_path(api, full_path, fingerprint):
                 api.set_conn(db.open_db(db_path))
             except Exception as e:
                 api._conn = None
-                api.log(f"restore_backup couldn't reopen the live database after finding a journal: {e}")
+                api._log(f"restore_backup couldn't reopen the live database after finding a journal: {utils.describe_error(e)}")
             cleanup_failures = db._remove_db_artifacts(staged_path)
             cleanup_failures += db._remove_db_artifacts(rollback_path)
-            api.log("restore_backup refused to replace a database with a journal beside it")
+            api._log("restore_backup refused to replace a database with a journal beside it")
             if cleanup_failures:
-                api.log("restore_backup couldn't clean up temporary restore files")
+                api._log("restore_backup couldn't clean up temporary restore files")
             return {"ok": False, "error": "The live database has an unfinished journal, so the restore was cancelled."}
 
         try:
@@ -541,12 +541,12 @@ def _restore_from_path(api, full_path, fingerprint):
                 api.set_conn(db.open_db(db_path))
             except Exception as reopen_error:
                 api._conn = None
-                api.log(f"restore_backup couldn't reopen unchanged live database: {reopen_error}")
+                api._log(f"restore_backup couldn't reopen unchanged live database: {utils.describe_error(reopen_error)}")
             cleanup_failures = db._remove_db_artifacts(staged_path)
             cleanup_failures += db._remove_db_artifacts(rollback_path)
-            api.log(f"restore_backup replace failed; live database was not changed: {e}")
+            api._log(f"restore_backup replace failed; live database was not changed: {utils.describe_error(e)}")
             if cleanup_failures:
-                api.log("restore_backup couldn't clean up temporary restore files")
+                api._log("restore_backup couldn't clean up temporary restore files")
             return {
                 "ok": False,
                 "error": "Couldn't put the backup into place. Nothing was changed.",
@@ -561,12 +561,12 @@ def _restore_from_path(api, full_path, fingerprint):
             except Exception as rollback_error:
                 cleanup_failures = db._remove_db_artifacts(staged_path)
                 cleanup_failures += db._remove_db_artifacts(rollback_path)
-                api.log(
+                api._log(
                     "restore_backup failed after replacement and couldn't put back "
-                    f"the local rollback copy: {rollback_error}"
+                    f"the local rollback copy: {utils.describe_error(rollback_error)}"
                 )
                 if cleanup_failures:
-                    api.log("restore_backup couldn't clean up temporary restore files")
+                    api._log("restore_backup couldn't clean up temporary restore files")
                 error = (
                     "The restore couldn't be finished. Close the app and open it again. "
                     "Your backup file was not changed."
@@ -584,12 +584,12 @@ def _restore_from_path(api, full_path, fingerprint):
                 api.set_conn(db.open_db(db_path))
             except Exception as reopen_error:
                 api._conn = None
-                api.log(f"restore_backup put data back but couldn't reopen it: {reopen_error}")
+                api._log(f"restore_backup put data back but couldn't reopen it: {utils.describe_error(reopen_error)}")
             cleanup_failures = db._remove_db_artifacts(staged_path)
             cleanup_failures += db._remove_db_artifacts(rollback_path)
-            api.log(f"restore_backup failed after replacement; live data was put back: {e}")
+            api._log(f"restore_backup failed after replacement; live data was put back: {utils.describe_error(e)}")
             if cleanup_failures:
-                api.log("restore_backup couldn't clean up temporary restore files")
+                api._log("restore_backup couldn't clean up temporary restore files")
             error = (
                 "The restore couldn't be finished. Close the app and open it again. "
                 "Your backup file was not changed."
@@ -604,15 +604,15 @@ def _restore_from_path(api, full_path, fingerprint):
 
         rollback_cleanup_failed = bool(db._remove_db_artifacts(rollback_path))
         if rollback_cleanup_failed:
-            api.log("restore_backup completed but couldn't clean up its local rollback copy")
-        api.log(
+            api._log("restore_backup completed but couldn't clean up its local rollback copy")
+        api._log(
             f"Restored from backup {os.path.basename(full_path)} "
             f"(safety backup: {os.path.basename(prerestore_path) if prerestore_path else 'none, no accounts'})"
         )
         result = api.get_config()
         warnings = []
         if prune_failed:
-            api.log(f"Pre-restore prune couldn't delete {len(prune_failed)} file(s) in the backup folder")
+            api._log(f"Pre-restore prune couldn't delete {len(prune_failed)} file(s) in the backup folder")
             warnings.append(utils._prune_failed_message(len(prune_failed)))
         if rollback_cleanup_failed:
             warnings.append("Restored, but a temporary copy in the data folder couldn't be deleted.")
@@ -620,7 +620,7 @@ def _restore_from_path(api, full_path, fingerprint):
             result["warning"] = " ".join(warnings)
         return result
     except Exception as e:
-        api.log(f"restore_backup failed: {e}")
+        api._log(f"restore_backup failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't restore that backup."}
 
 
@@ -649,7 +649,7 @@ def choose_restore_file(api):
         except FileNotFoundError:
             return {"ok": False, "error": "Couldn't read that file."}
         except Exception as error:
-            api.log(f"choose_restore_file identity check failed: {type(error).__name__}")
+            api._log(f"choose_restore_file identity check failed: {type(error).__name__}")
             return {"ok": False, "error": "Couldn't read that file."}
         try:
             with open(picked, "rb") as source:
@@ -668,15 +668,15 @@ def choose_restore_file(api):
             except Exception as error:
                 cleanup_failures = db._remove_db_artifacts(held_path)
                 if cleanup_failures:
-                    api.log("choose_restore_file couldn't clean up partial copy")
-                api.log(f"choose_restore_file copy failed: {type(error).__name__}")
+                    api._log("choose_restore_file couldn't clean up partial copy")
+                api._log(f"choose_restore_file copy failed: {type(error).__name__}")
                 return {"ok": False, "error": "Couldn't copy that file. Nothing was changed."}
             return api._publish_restore_import(
                 held_path, os.path.basename(picked), backup._parse_backup_timestamp(os.path.basename(picked), held_path)
             )
         except Exception as error:
-            api.log(f"choose_restore_file read failed: {type(error).__name__}")
+            api._log(f"choose_restore_file read failed: {type(error).__name__}")
             return {"ok": False, "error": "Couldn't read that file."}
     except Exception as error:
-        api.log(f"choose_restore_file failed: {type(error).__name__}")
+        api._log(f"choose_restore_file failed: {type(error).__name__}")
         return {"ok": False, "error": "Couldn't read that file."}

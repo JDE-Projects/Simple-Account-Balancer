@@ -13,9 +13,9 @@ def save_theme(api, theme: str):
     prefs_data = prefs.load_prefs()
     prefs_data["theme"] = theme
     if prefs.save_prefs(prefs_data):
-        api.log(f"Theme set to {theme}")
+        api._log(f"Theme set to {theme}")
         return {"ok": True}
-    api.log("Could not save theme pref")
+    api._log("Could not save theme pref")
     return {
         "ok": False,
         "error": "Theme won't be remembered: couldn't save settings next to the app.",

@@ -7,6 +7,7 @@ from functools import wraps
 
 from app import db, paths, utils
 from app.debug_log import DebugLog
+from app.services.debug import log as _write_debug_log
 from app.services import (
     accounts, autopays, backup, categories, compare, debug, export, restore, settings,
     transactions, updates,
@@ -21,7 +22,7 @@ def _database_call(method):
     def wrapped(self, *args, **kwargs):
         with self._db_lock:
             if self._database_failed:
-                self.log(f"{method.__name__} refused after database rollback failure")
+                self._log(f"{method.__name__} refused after database rollback failure")
                 if method.__name__ == "close_conn":
                     return False
                 if method.__name__ == "post_due_autopays":
@@ -37,14 +38,14 @@ def _database_call(method):
                     try:
                         if self._conn is not None and self._conn.in_transaction:
                             self._conn.rollback()
-                            self.log(f"{method.__name__} left uncommitted work; rolled back")
+                            self._log(f"{method.__name__} left uncommitted work; rolled back")
                     except Exception as e:
-                        self.log(f"{method.__name__} could not roll back database work: {e}")
+                        self._log(f"{method.__name__} could not roll back database work: {utils.describe_error(e)}")
                         try:
                             if self._conn is not None:
                                 self._conn.close()
                         except Exception as close_error:
-                            self.log(f"{method.__name__} could not close the database: {close_error}")
+                            self._log(f"{method.__name__} could not close the database: {utils.describe_error(close_error)}")
                         self._conn = None
                         self._database_failed = True
 
@@ -101,7 +102,7 @@ class Api:
             self._conn = None
             return True
         except Exception as e:
-            self.log(f"close_conn failed: {e}")
+            self._log(f"close_conn failed: {utils.describe_error(e)}")
             return False
 
     # --- account + config ---------------------------------------------------
@@ -291,7 +292,7 @@ class Api:
         """Publish and preview a copied restore file while holding the database lock."""
         cleanup_failures = self._clear_restore_import()
         if cleanup_failures:
-            self.log("restore import couldn't discard an earlier temporary copy")
+            self._log("restore import couldn't discard an earlier temporary copy")
         held = {
             "token": secrets.token_hex(16),
             "path": held_path,
@@ -304,7 +305,7 @@ class Api:
         if not preview["ok"]:
             cleanup_failures = self._clear_restore_import()
             if cleanup_failures:
-                self.log("restore import couldn't clean up a failed temporary copy")
+                self._log("restore import couldn't clean up a failed temporary copy")
             return preview
         held["fingerprint"] = preview["fingerprint"]
         preview["token"] = held["token"]
@@ -327,7 +328,7 @@ class Api:
         finally:
             cleanup_failures = self._clear_restore_import()
         if cleanup_failures:
-            self.log("restore import couldn't clean up its temporary copy")
+            self._log("restore import couldn't clean up its temporary copy")
             message = "A temporary copy in the data folder couldn't be deleted."
             if result["ok"]:
                 result["warning"] = " ".join(filter(None, (result.get("warning"), message)))
@@ -344,7 +345,7 @@ class Api:
             return {"ok": True}
         cleanup_failures = self._clear_restore_import()
         if cleanup_failures:
-            self.log("restore import couldn't discard its temporary copy")
+            self._log("restore import couldn't discard its temporary copy")
             return {
                 "ok": True,
                 "warning": "A temporary copy in the data folder couldn't be deleted.",
@@ -366,8 +367,8 @@ class Api:
     def set_debug(self, on: bool):
         return debug.set_debug(self, on)
 
-    def log(self, msg: str):
-        return debug.log(self, msg)
+    def _log(self, msg: str):
+        return _write_debug_log(self, msg)
 
     def _on_debug_log_warning(self, message: str):
         return debug._on_debug_log_warning(self, message)

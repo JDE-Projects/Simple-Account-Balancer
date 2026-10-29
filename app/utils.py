@@ -4,6 +4,7 @@ import calendar
 import datetime
 import os
 import re
+import sqlite3
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 
 
@@ -147,6 +148,17 @@ def redact_log_text(text: str) -> str:
 
     text = _LOG_QUOTED_RE.sub(_quoted, str(text))
     return _LOG_BARE_PATH_RE.sub("<path>", text)
+
+
+def describe_error(error) -> str:
+    """Describe an error safely because messages can quote typed values and paths."""
+    type_name = type(error).__name__
+    sqlite_errorname = getattr(error, "sqlite_errorname", None)
+    if isinstance(error, sqlite3.Error) and sqlite_errorname:
+        return f"{type_name}: {sqlite_errorname}"
+    if isinstance(error, OSError) and error.strerror:
+        return f"{type_name}: {error.strerror}"
+    return type_name
 
 
 def _prune_failed_message(count: int) -> str:

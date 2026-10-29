@@ -133,7 +133,7 @@ def _recover_damaged_database(api, db_path, folders, is_exclusive):
         return None
 
     backup_time = restore._format_launch_backup_timestamp(timestamp)
-    api.log(f"Launch restored damaged database from {os.path.basename(full_path)}")
+    api._log(f"Launch restored damaged database from {os.path.basename(full_path)}")
     api._add_backup_notice(
         "Your data file was damaged, so it was restored from the backup of "
         f"{backup_time}. Changes made after that backup were lost. The damaged file was "
@@ -228,9 +228,9 @@ def main():
     api._debug_log.prune()
     removed_restore_count, stale_restore_failures = restore._remove_stale_restore_files(folder)
     if removed_restore_count:
-        api.log(f"Launch cleanup removed {removed_restore_count} stale restore file(s) in the app folder")
+        api._log(f"Launch cleanup removed {removed_restore_count} stale restore file(s) in the app folder")
     if stale_restore_failures:
-        api.log(
+        api._log(
             f"Launch cleanup couldn't delete {len(stale_restore_failures)} stale restore file(s): "
             f"{', '.join(stale_restore_failures)}"
         )
@@ -259,7 +259,7 @@ def main():
         platform_win._show_newer_schema_error()
         sys.exit(1)
     except Exception as error:
-        api.log(f"Database open failed: {error}")
+        api._log(f"Database open failed: {utils.describe_error(error)}")
         platform_win._show_db_unavailable_error()
         sys.exit(1)
 
@@ -270,7 +270,7 @@ def main():
     try:
         api.post_due_autopays()
     except Exception as e:
-        api.log(f"post_due_autopays call failed: {e}")
+        api._log(f"post_due_autopays call failed: {utils.describe_error(e)}")
         api._set_autopay_notice(autopays._AUTOPAY_POST_FAILED_MESSAGE, is_error=True)
 
     win = webview.create_window(
@@ -313,9 +313,9 @@ def main():
             )
             folder_kind = "the fallback folder" if used_fallback else "the backup folder"
             if ok:
-                api.log(f"Exit backup created in {folder_kind}")
+                api._log(f"Exit backup created in {folder_kind}")
             else:
-                api.log(f"Exit backup failed, tried {folder_kind}")
+                api._log(f"Exit backup failed, tried {folder_kind}")
             backup._log_cleanup_failures(api, "Exit", cleanup_failed)
             # Failure wins over the fallback notice: a fallback that then
             # failed to write must not report that the backup was saved.
@@ -324,7 +324,7 @@ def main():
             elif used_fallback:
                 platform_win._show_backup_fallback_notice(actual_dir)
             if ok and prune_failed:
-                api.log(f"Exit prune couldn't delete {len(prune_failed)} file(s) in {folder_kind}")
+                api._log(f"Exit prune couldn't delete {len(prune_failed)} file(s) in {folder_kind}")
                 platform_win._show_prune_failed_notice(len(prune_failed), actual_dir)
     except Exception:
         pass

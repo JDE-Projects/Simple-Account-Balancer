@@ -142,7 +142,7 @@ def _remove_stale_backup_candidates(backups_dir: str) -> list:
 def _log_cleanup_failures(api, when: str, cleanup_failed: list) -> None:
     """Log each leftover candidate file a backup couldn't remove."""
     for failure in cleanup_failed:
-        api.log(f"{when} backup couldn't remove a leftover file: {failure}")
+        api._log(f"{when} backup couldn't remove a leftover file: {failure}")
 
 
 def _candidate_is_valid(candidate_path: str) -> bool:
@@ -189,7 +189,7 @@ def _snapshot_for_backup_copy(api):
                 pass
         if snapshot_path is not None:
             db._remove_db_artifacts(snapshot_path)
-        api.log(f"save_backup_copy snapshot failed: {type(e).__name__}")
+        api._log(f"save_backup_copy snapshot failed: {type(e).__name__}")
         return {"ok": False, "error": "Couldn't save the backup."}
 
 
@@ -201,7 +201,7 @@ def _cleanup_warning(api, snapshot_path, candidate_path, published):
     failed = [(folder, entries) for folder, entries in failures if entries]
     if not failed:
         return None
-    api.log(f"Backup copy cleanup failed: {sum(len(entries) for _, entries in failed)}")
+    api._log(f"Backup copy cleanup failed: {sum(len(entries) for _, entries in failed)}")
     folder = next(
         (folder for folder, _ in failed if folder == "the folder you picked"), failed[0][0]
     )
@@ -227,9 +227,9 @@ def _copy_backup_snapshot(api, snapshot_path: str, dest: str):
                 os.replace(candidate_path, dest)
                 published = True
                 result = {"ok": True, "path": dest}
-                api.log("Backup copy saved")
+                api._log("Backup copy saved")
     except Exception as e:
-        api.log(f"save_backup_copy failed: {type(e).__name__}")
+        api._log(f"save_backup_copy failed: {type(e).__name__}")
         result = {"ok": False, "error": "Couldn't save the backup."}
     finally:
         warning = _cleanup_warning(api, snapshot_path, candidate_path, published)
@@ -271,7 +271,7 @@ def save_backup_copy(api):
             return snapshot
         return _copy_backup_snapshot(api, snapshot["snapshot"], dest)
     except Exception as e:
-        api.log(f"save_backup_copy failed: {type(e).__name__}")
+        api._log(f"save_backup_copy failed: {type(e).__name__}")
         return {"ok": False, "error": "Couldn't save the backup."}
 
 
@@ -438,12 +438,12 @@ def choose_backup_folder(api):
         prefs_data = prefs.load_prefs()
         prefs_data["backup_folder"] = folder
         if not prefs.save_prefs(prefs_data):
-            api.log("Could not save backup folder pref")
+            api._log("Could not save backup folder pref")
             return {"ok": False, "error": "Couldn't save the backup folder setting."}
-        api.log("Backup folder moved to a custom folder")
+        api._log("Backup folder moved to a custom folder")
         return {"ok": True, "backup_folder": folder, "backup_folder_is_custom": True}
     except Exception as e:
-        api.log(f"choose_backup_folder failed: {e}")
+        api._log(f"choose_backup_folder failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't set the backup folder."}
 
 
@@ -453,13 +453,13 @@ def reset_backup_folder(api):
         prefs_data = prefs.load_prefs()
         prefs_data.pop("backup_folder", None)
         if not prefs.save_prefs(prefs_data):
-            api.log("Could not save backup folder pref on reset")
+            api._log("Could not save backup folder pref on reset")
             return {"ok": False, "error": "Couldn't reset the backup folder."}
-        api.log("Backup folder reset to default")
+        api._log("Backup folder reset to default")
         default_dir, _ = effective_backup_dir()
         return {"ok": True, "backup_folder": default_dir, "backup_folder_is_custom": False}
     except Exception as e:
-        api.log(f"reset_backup_folder failed: {e}")
+        api._log(f"reset_backup_folder failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't reset the backup folder."}
 
 
@@ -471,12 +471,12 @@ def set_backup_keep(api, n):
         prefs_data = prefs.load_prefs()
         prefs_data["backup_keep"] = keep
         if not prefs.save_prefs(prefs_data):
-            api.log("Could not save backup count pref")
+            api._log("Could not save backup count pref")
             return {"ok": False, "error": "Couldn't save the backup count."}
-        api.log(f"Backup keep count set to {keep}")
+        api._log(f"Backup keep count set to {keep}")
         return {"ok": True, "backup_keep": keep}
     except Exception as e:
-        api.log(f"set_backup_keep failed: {e}")
+        api._log(f"set_backup_keep failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't save the backup count."}
 
 
@@ -502,5 +502,5 @@ def list_backups(api):
         items.sort(key=lambda it: (it["timestamp"], it["filename"]), reverse=True)
         return {"ok": True, "backups": items}
     except Exception as e:
-        api.log(f"list_backups failed: {e}")
+        api._log(f"list_backups failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't list backups."}

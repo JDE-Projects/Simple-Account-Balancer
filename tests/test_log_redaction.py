@@ -58,7 +58,7 @@ def _log_text(log_dir):
 
 def test_log_redacts_every_line_written(tmp_path, monkeypatch):
     api, log_dir = _debug_api(tmp_path, monkeypatch)
-    api.log(r"open failed: [Errno 13] Permission denied: 'C:\\Users\\John\\secret.db'")
+    api._log(r"open failed: [Errno 13] Permission denied: 'C:\\Users\\John\\secret.db'")
     text = _log_text(log_dir)
     assert "John" not in text
     assert "Permission denied: '<path>'" in text
