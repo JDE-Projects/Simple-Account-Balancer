@@ -5,7 +5,7 @@ on:
     branches: [main]
 jobs:
   ci:
-    uses: JDE-Projects/Build-Tools/.github/workflows/ci-windows.yml@61439c9623c5941cc53089bcbb0690bac91ec8e8 # Build-Tools main (ruff, import check, pytest, runtime lock check)
+    uses: JDE-Projects/Build-Tools/.github/workflows/ci-windows.yml@a0335e9c35932460eb1fc23dca09170f81ccd192 # Build-Tools main (ruff, import check, pytest, runtime lock check)
     permissions:
       contents: read
     with:
