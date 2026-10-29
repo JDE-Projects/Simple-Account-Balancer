@@ -1,5 +1,7 @@
 """Category and payee operations."""
 
+from app import utils
+
 def get_categories(api):
     """Name-sorted category list with usage counts (case-insensitive)."""
     try:
@@ -21,7 +23,7 @@ def get_categories(api):
         ]
         return {"ok": True, "categories": categories}
     except Exception as e:
-        api.log(f"get_categories failed: {e}")
+        api._log(f"get_categories failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't load the categories."}
 
 
@@ -33,10 +35,10 @@ def add_category(api, name):
         cur = api._conn.cursor()
         cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (name_s,))
         api._conn.commit()
-        api.log("Category added")
+        api._log("Category added")
         return api.get_categories()
     except Exception as e:
-        api.log(f"add_category failed: {e}")
+        api._log(f"add_category failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't add the category."}
 
 
@@ -68,7 +70,7 @@ def rename_category(api, category_id, new_name):
             )
             cur.execute("DELETE FROM categories WHERE id=?", (category_id,))
             api._conn.commit()
-            api.log(f"Category {category_id} merged into category {merge_target['id']}")
+            api._log(f"Category {category_id} merged into category {merge_target['id']}")
             return api.get_categories()
         cur.execute("UPDATE categories SET name=? WHERE id=?", (new_name_s, category_id))
         cur.execute(
@@ -80,10 +82,10 @@ def rename_category(api, category_id, new_name):
             (new_name_s, old_name),
         )
         api._conn.commit()
-        api.log(f"Category {category_id} renamed")
+        api._log(f"Category {category_id} renamed")
         return api.get_categories()
     except Exception as e:
-        api.log(f"rename_category failed: {e}")
+        api._log(f"rename_category failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't rename the category."}
 
 
@@ -115,10 +117,10 @@ def delete_category(api, category_id, reassign_to=None):
         cur.execute("DELETE FROM categories WHERE id=?", (category_id,))
         api._conn.commit()
         detail = " (transactions reassigned)" if reassign_s else ""
-        api.log(f"Category {category_id} deleted{detail}")
+        api._log(f"Category {category_id} deleted{detail}")
         return api.get_categories()
     except Exception as e:
-        api.log(f"delete_category failed: {e}")
+        api._log(f"delete_category failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't delete the category."}
 
 
@@ -145,6 +147,6 @@ def get_payees(api, account_id=None):
             payees.append({"payee": r["payee"], "last_category": r["category"]})
         return {"ok": True, "payees": payees}
     except Exception as e:
-        api.log(f"get_payees failed: {e}")
+        api._log(f"get_payees failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't load the payees."}
 

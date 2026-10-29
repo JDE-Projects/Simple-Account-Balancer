@@ -33,7 +33,6 @@ PUBLIC_API_SIGNATURES = [
     ("get_payees", "(self, account_id=None)"),
     ("get_transactions", "(self, account_id=None, from_date=None, to_date=None, search='')"),
     ("list_backups", "(self)"),
-    ("log", "(self, msg: str)"),
     ("open_url", "(self, url: str)"),
     ("post_due_autopays", "(self)"),
     ("preview_restore", "(self, filename)"),

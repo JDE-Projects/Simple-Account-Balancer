@@ -181,7 +181,7 @@ def test_launch_logs_leftover_cleanup_failures_without_a_notice(tmp_path, monkey
     conn.close()
     api = Api("test")
     logged = []
-    monkeypatch.setattr(api, "log", logged.append)
+    monkeypatch.setattr(api, "_log", logged.append)
     monkeypatch.setattr(
         backup,
         "_run_backup_with_fallback",

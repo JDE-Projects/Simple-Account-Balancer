@@ -193,7 +193,7 @@ def test_save_backup_copy_log_has_no_path(tmp_path, monkeypatch):
     destination = secret_dir / "backup.db"
     api, _ = _backup_copy_api(tmp_path, str(destination))
     logged = []
-    api.log = logged.append
+    api._log = logged.append
 
     assert api.save_backup_copy()["ok"] is True
     monkeypatch.setattr(sab.os, "replace", lambda *args: (_ for _ in ()).throw(PermissionError()))
@@ -824,7 +824,7 @@ def test_log_cleanup_failures_logs_each_file():
     logged = []
 
     class FakeApi:
-        def log(self, message):
+        def _log(self, message):
             logged.append(message)
 
     sab._log_cleanup_failures(FakeApi(), "Exit", ["a.db: PermissionError", "a.db-journal: OSError"])

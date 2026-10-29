@@ -16,7 +16,8 @@ def log(api, msg: str):
     # reports, so lines may carry ids, dates, and counts, never file
     # paths, payees, amounts, balances, or user-entered names. Every line
     # also passes through redact_log_text, which catches paths and quoted
-    # values inside error messages. Size limits, old-log pruning, and
+    # values inside error messages. Exception text goes through
+    # utils.describe_error, never str(e). Size limits, old-log pruning, and
     # write failures are handled by app/debug_log.py.
     api._debug_log.log(msg)
 

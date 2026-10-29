@@ -766,7 +766,7 @@ def test_restore_damaged_database_removes_partial_kept_copy(tmp_path, monkeypatc
     damaged = b"damaged live bytes"
     Path(db_path).write_bytes(damaged)
     logs = []
-    monkeypatch.setattr(api, "log", logs.append)
+    monkeypatch.setattr(api, "_log", logs.append)
     real_copy2 = restore.shutil.copy2
     partial_paths = []
 
@@ -788,7 +788,7 @@ def test_restore_damaged_database_removes_partial_kept_copy(tmp_path, monkeypatc
     assert Path(db_path).read_bytes() == damaged
     assert not list(tmp_path.glob(".balancer_restore_stage_*.db"))
     assert not list(tmp_path.glob("simple_account_balancer.damaged_*.db"))
-    assert any("OSError: disk full" in line for line in logs)
+    assert any("OSError" in line for line in logs)
 
 
 def _fail_publish_replace(monkeypatch, live_path):
@@ -835,7 +835,7 @@ def test_restore_damaged_database_journal_return_keeps_newer_journal(tmp_path, m
 
     monkeypatch.setattr(restore.os, "replace", replace)
     messages = []
-    monkeypatch.setattr(api, "log", messages.append)
+    monkeypatch.setattr(api, "_log", messages.append)
 
     kept_path, error = restore.restore_damaged_database(api, str(backup_path), db_path)
 
@@ -1354,7 +1354,7 @@ def test_restore_from_file_log_has_no_path(tmp_path, monkeypatch):
     picked = outside / "SAB_Backup_01012026.db"
     _backup_from_conn(api._conn, str(picked))
     messages = []
-    monkeypatch.setattr(api, "log", messages.append)
+    monkeypatch.setattr(api, "_log", messages.append)
 
     preview = _choose_restore_file(api, picked)
     assert api.restore_from_file(preview["token"], preview["fingerprint"])["ok"] is True

@@ -47,7 +47,7 @@ def get_compare_data(api, account_id=None, from_date=None, to_date=None):
             "register_balance_cents": api._current_balance_cents(account),
         }
     except Exception as e:
-        api.log(f"get_compare_data failed: {e}")
+        api._log(f"get_compare_data failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't load the compare data."}
 
 
@@ -142,7 +142,7 @@ def find_compare_matches(api, account_id=None, amount=None, from_date=None, to_d
                                 return found_here
                 return found_here
             combinations = search_combos(range_list, 10)
-        api.log(
+        api._log(
             f"find_compare_matches: exact={len(exact)} half={len(half)} transposition_hint={transposition_hint} "
             f"combinations={len(combinations)} combinations_skipped={combinations_skipped}"
         )
@@ -155,5 +155,5 @@ def find_compare_matches(api, account_id=None, amount=None, from_date=None, to_d
             "combinations_skipped": combinations_skipped,
         }
     except Exception as e:
-        api.log(f"find_compare_matches failed: {e}")
+        api._log(f"find_compare_matches failed: {utils.describe_error(e)}")
         return {"ok": False, "error": "Couldn't search for the comparison."}

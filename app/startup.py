@@ -24,10 +24,10 @@ def exit_backup_needed(api, db_path: str) -> bool:
         finally:
             conn.close()
     except Exception as error:
-        api.log(f"Exit backup account check failed: {type(error).__name__}")
+        api._log(f"Exit backup account check failed: {type(error).__name__}")
         return True
     if not has_accounts:
-        api.log("Exit backup skipped: no accounts yet")
+        api._log("Exit backup skipped: no accounts yet")
         return False
     return True
 
@@ -39,7 +39,7 @@ def prepare_database(api, db_path: str) -> StartupResult:
 
     recovery = db.recover_and_check(db_path)
     if recovery.status == "damaged":
-        api.log(f"Launch database check failed: {recovery.detail}")
+        api._log(f"Launch database check failed: {recovery.detail}")
         effective_dir, is_custom = backup.effective_backup_dir()
         folders = [effective_dir]
         default_dir = os.path.join(paths.app_dir(), config.BACKUP_DIRNAME)
@@ -47,20 +47,20 @@ def prepare_database(api, db_path: str) -> StartupResult:
             folders.append(default_dir)
         return StartupResult("damaged", folders)
     if recovery.status == "unavailable":
-        api.log(f"Launch database unavailable: {recovery.detail}")
+        api._log(f"Launch database unavailable: {recovery.detail}")
         return StartupResult("unavailable", [])
     if recovery.status == "empty":
         # Nothing to protect, so no backup: open_db sets the file up.
-        api.log(f"Launch database check: {recovery.detail}")
+        api._log(f"Launch database check: {recovery.detail}")
         return StartupResult("continue", [])
 
     try:
         try:
             if not db.has_accounts(recovery.conn):
-                api.log("Launch backup skipped: no accounts yet")
+                api._log("Launch backup skipped: no accounts yet")
                 return StartupResult("continue", [])
         except Exception as error:
-            api.log(f"Launch backup account check failed: {type(error).__name__}")
+            api._log(f"Launch backup account check failed: {type(error).__name__}")
         # Launch backup precedes open_db after recovery, so it remains a
         # pre-migration snapshot while SQLite has already resolved any hot journal.
         ok, used_fallback, actual_dir, prune_failed, cleanup_failed = backup._run_backup_with_fallback(
@@ -71,11 +71,11 @@ def prepare_database(api, db_path: str) -> StartupResult:
 
     folder_kind = "the fallback folder" if used_fallback else "the backup folder"
     if ok:
-        api.log(f"Launch backup created in {folder_kind}")
+        api._log(f"Launch backup created in {folder_kind}")
     else:
-        api.log(f"Launch backup failed, tried {folder_kind}")
+        api._log(f"Launch backup failed, tried {folder_kind}")
     if used_fallback:
-        api.log("Backup folder unreachable at launch, used the fallback folder")
+        api._log("Backup folder unreachable at launch, used the fallback folder")
     backup._log_cleanup_failures(api, "Launch", cleanup_failed)
     if not ok:
         api._add_backup_notice(f"Today's backup couldn't be saved. Tried to write it to {actual_dir}.")
@@ -84,7 +84,7 @@ def prepare_database(api, db_path: str) -> StartupResult:
             f"Backup folder wasn't reachable. Today's backup was saved to {actual_dir} instead."
         )
     if ok and prune_failed:
-        api.log(f"Launch prune couldn't delete {len(prune_failed)} file(s) in {folder_kind}")
+        api._log(f"Launch prune couldn't delete {len(prune_failed)} file(s) in {folder_kind}")
         api._add_backup_notice(utils._prune_failed_message(len(prune_failed)))
     if not ok and recovery.version < config.SCHEMA_VERSION:
         return StartupResult("upgrade_blocked", [actual_dir])
