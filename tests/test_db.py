@@ -159,3 +159,29 @@ def test_open_db_leaves_newer_schema_db_untouched(tmp_path):
     version = conn2.execute("PRAGMA user_version").fetchone()[0]
     conn2.close()
     assert version == SCHEMA_VERSION + 1
+
+
+def test_database_uri_keeps_network_server_name():
+    # SQLite drops the server name from file://server/..., so a network
+    # path needs an empty authority: file:////server/share/...
+    from app.db import _database_uri
+    uri = _database_uri(r"\\server\share\Balancer\data.db", "rw")
+    assert uri == "file:////server/share/Balancer/data.db?mode=rw"
+
+
+def test_database_uri_drive_letter_path():
+    from app.db import _database_uri
+    uri = _database_uri(r"C:\Users\Me\My Data\data.db", "ro")
+    assert uri == "file:C%3A/Users/Me/My%20Data/data.db?mode=ro"
+
+
+def test_readwrite_and_readonly_open_existing_drive_letter_db(tmp_path):
+    from app.db import _readonly_connection, _readwrite_connection
+    path = str(tmp_path / "data.db")
+    open_db(path).close()
+    for connect in (_readwrite_connection, _readonly_connection):
+        conn = connect(path)
+        try:
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        finally:
+            conn.close()

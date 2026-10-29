@@ -189,8 +189,18 @@ def open_db(path: str) -> sqlite3.Connection:
         raise
 
 
+def _database_uri(path: str, mode: str) -> str:
+    r"""SQLite file address that opens an existing file and never creates it.
+    A network path (\\server\share) gets two extra leading slashes,
+    file:////server/share, because SQLite drops the server name otherwise."""
+    path = path.replace("\\", "/")
+    if path.startswith("//"):
+        path = "//" + path
+    return "file:" + urllib.parse.quote(path) + f"?mode={mode}"
+
+
 def _readonly_connection(path: str) -> sqlite3.Connection:
-    uri = "file:" + urllib.parse.quote(path.replace("\\", "/")) + "?mode=ro"
+    uri = _database_uri(path, "ro")
     conn = sqlite3.connect(uri, uri=True)
     conn.row_factory = sqlite3.Row
     return conn
@@ -202,7 +212,7 @@ def has_accounts(conn: sqlite3.Connection) -> bool:
 
 
 def _readwrite_connection(path: str, timeout: float = 5.0) -> sqlite3.Connection:
-    uri = "file:" + urllib.parse.quote(path.replace("\\", "/")) + "?mode=rw"
+    uri = _database_uri(path, "rw")
     conn = sqlite3.connect(uri, uri=True, timeout=timeout)
     conn.row_factory = sqlite3.Row
     return conn
