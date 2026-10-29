@@ -29,6 +29,10 @@ export default async function smoke(helpers) {
 
   // b) first-run setup, filled in by typing.
   await waitFor("document.getElementById('firstrunWrap').style.display !== 'none'", 10000);
+  const firstRunRestoreVisible = await evaluate(
+    "document.getElementById('fr-restore-btn').offsetParent !== null"
+  );
+  check("first-run Restore from a backup button is visible", firstRunRestoreVisible);
   await type("#fr-name", "Checking");
   await type("#fr-balance", "500.00");
   // fr-date is a native <input type="date">: type() fills it with real
@@ -125,7 +129,19 @@ export default async function smoke(helpers) {
   check("theme change after the second toggle was saved through Python",
     cfgAfterSecondToggle.theme === (afterSecondToggle ? "light" : "dark"), JSON.stringify(cfgAfterSecondToggle.theme));
 
-  // f) no error notice left on screen at the end.
+  // f) account settings offers Save backup. Not clicked: it opens the native
+  // save dialog, which the driver can't reach.
+  await click("#gearBtn");
+  await waitFor("document.getElementById('am-save-backup-btn').offsetParent !== null", 5000);
+  const saveBackupReady = await evaluate(
+    "!document.getElementById('am-save-backup-btn').disabled && typeof api().save_backup_copy === 'function'"
+  );
+  check("Save backup button is shown, enabled, and wired to Python", saveBackupReady);
+  await evaluate("document.getElementById('am-save-backup-btn').scrollIntoView({block:'center'})");
+  await screenshot("account-settings-backups");
+  await evaluate("closeAccountModal()");
+
+  // g) no error notice left on screen at the end.
   const errorNoticeHidden = await evaluate("document.getElementById('errorNotice').style.display === 'none'");
   check("no error notice left on screen", errorNoticeHidden);
 }

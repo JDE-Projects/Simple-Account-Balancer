@@ -304,10 +304,10 @@ def main():
     # local variable.
     api.close_conn()
 
-    # Exit backup runs unconditionally when the db file exists. Guarded so a
-    # backup failure here can never block shutdown.
+    # Exit backup runs when the database has accounts. Guarded so a backup
+    # failure here can never block shutdown.
     try:
-        if os.path.exists(db_path):
+        if os.path.exists(db_path) and startup.exit_backup_needed(api, db_path):
             ok, used_fallback, actual_dir, prune_failed, cleanup_failed = (
                 backup._run_backup_with_fallback(db_path)
             )

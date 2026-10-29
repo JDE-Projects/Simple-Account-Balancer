@@ -9,11 +9,11 @@ import pytest
 from app import config, db
 from app.api import Api
 from app.services import backup
-from app.startup import StartupResult, prepare_database
+from app.startup import StartupResult, exit_backup_needed, prepare_database
 import simple_account_balancer as launcher
 
 
-def _make_version_two_database(path):
+def _make_version_two_database(path, with_account=True):
     conn = sqlite3.connect(path)
     try:
         conn.execute(
@@ -37,13 +37,22 @@ def _make_version_two_database(path):
             "pay_day INTEGER NOT NULL, post_day INTEGER NOT NULL, is_variable INTEGER NOT NULL DEFAULT 0, "
             "created_at TEXT NOT NULL)"
         )
-        conn.execute(
-            "INSERT INTO accounts VALUES (1, 'Older', 0, '2024-01-01', '2024-01-01', NULL, NULL)"
-        )
+        if with_account:
+            conn.execute(
+                "INSERT INTO accounts VALUES (1, 'Older', 0, '2024-01-01', '2024-01-01', NULL, NULL)"
+            )
         conn.execute("PRAGMA user_version = 2")
         conn.commit()
     finally:
         conn.close()
+
+
+def _add_account(conn):
+    conn.execute(
+        "INSERT INTO accounts (name, starting_balance_cents, starting_date, created_at) "
+        "VALUES ('Checking', 0, '2024-01-01', '2024-01-01')"
+    )
+    conn.commit()
 
 
 def _make_hot_journal_copy(tmp_path):
@@ -156,6 +165,7 @@ def test_backup_failure_blocks_upgrade_without_changing_live_database(tmp_path, 
 def test_backup_failure_at_current_version_continues_with_existing_notice(tmp_path, monkeypatch):
     live = tmp_path / config.DB_FILENAME
     conn = db.open_db(str(live))
+    _add_account(conn)
     conn.close()
     api = Api("test")
     monkeypatch.setattr(backup, "_run_backup_with_fallback", lambda *args, **kwargs: (False, False, "x", [], []))
@@ -167,6 +177,7 @@ def test_backup_failure_at_current_version_continues_with_existing_notice(tmp_pa
 def test_launch_logs_leftover_cleanup_failures_without_a_notice(tmp_path, monkeypatch):
     live = tmp_path / config.DB_FILENAME
     conn = db.open_db(str(live))
+    _add_account(conn)
     conn.close()
     api = Api("test")
     logged = []
@@ -203,6 +214,7 @@ def test_pre_upgrade_snapshot_keeps_old_version_then_open_db_migrates(tmp_path):
 def test_newer_database_is_backed_up_then_open_db_refuses_it(tmp_path):
     live = tmp_path / config.DB_FILENAME
     conn = db.open_db(str(live))
+    _add_account(conn)
     conn.execute(f"PRAGMA user_version = {config.SCHEMA_VERSION + 1}")
     conn.commit()
     conn.close()
@@ -225,6 +237,82 @@ def test_empty_first_launch_file_continues_without_backup(tmp_path, tables):
     assert db.recover_and_check(str(live)).status == "empty"
     assert prepare_database(Api("test"), str(live)).outcome == "continue"
     assert not (tmp_path / config.BACKUP_DIRNAME).exists()
+
+
+def test_launch_skips_backup_when_current_schema_has_no_accounts(tmp_path):
+    live = tmp_path / config.DB_FILENAME
+    conn = db.open_db(str(live))
+    conn.close()
+    api = Api("test")
+
+    assert prepare_database(api, str(live)).outcome == "continue"
+    assert not (tmp_path / config.BACKUP_DIRNAME).exists()
+    assert api._backup_notice is None
+
+
+def test_launch_backs_up_when_current_schema_has_an_account(tmp_path):
+    live = tmp_path / config.DB_FILENAME
+    conn = db.open_db(str(live))
+    _add_account(conn)
+    conn.close()
+
+    assert prepare_database(Api("test"), str(live)).outcome == "continue"
+    assert len(list((tmp_path / config.BACKUP_DIRNAME).iterdir())) == 1
+
+
+def test_launch_skips_old_empty_schema_and_open_db_upgrades_it(tmp_path):
+    live = tmp_path / config.DB_FILENAME
+    _make_version_two_database(live, with_account=False)
+
+    assert prepare_database(Api("test"), str(live)).outcome == "continue"
+    assert not (tmp_path / config.BACKUP_DIRNAME).exists()
+    conn = db.open_db(str(live))
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == config.SCHEMA_VERSION
+    finally:
+        conn.close()
+
+
+def test_launch_backs_up_when_account_check_raises(tmp_path, monkeypatch):
+    live = tmp_path / config.DB_FILENAME
+    conn = db.open_db(str(live))
+    conn.close()
+    monkeypatch.setattr(db, "has_accounts", lambda _: (_ for _ in ()).throw(OSError()))
+
+    assert prepare_database(Api("test"), str(live)).outcome == "continue"
+    assert len(list((tmp_path / config.BACKUP_DIRNAME).iterdir())) == 1
+
+
+def test_exit_backup_needed_skips_empty_database(tmp_path):
+    live = tmp_path / config.DB_FILENAME
+    conn = db.open_db(str(live))
+    conn.close()
+
+    assert exit_backup_needed(Api("test"), str(live)) is False
+
+
+def test_exit_backup_needed_accepts_database_with_account(tmp_path):
+    live = tmp_path / config.DB_FILENAME
+    conn = db.open_db(str(live))
+    _add_account(conn)
+    conn.close()
+
+    assert exit_backup_needed(Api("test"), str(live)) is True
+
+
+def test_exit_backup_needed_fails_open_when_account_check_raises(tmp_path, monkeypatch):
+    live = tmp_path / config.DB_FILENAME
+    conn = db.open_db(str(live))
+    conn.close()
+    monkeypatch.setattr(db, "has_accounts", lambda _: (_ for _ in ()).throw(OSError()))
+
+    assert exit_backup_needed(Api("test"), str(live)) is True
+
+
+def test_exit_backup_needed_fails_open_when_file_cannot_be_opened(tmp_path):
+    missing = tmp_path / config.DB_FILENAME
+
+    assert exit_backup_needed(Api("test"), str(missing)) is True
 
 
 def test_old_file_with_rows_but_broken_schema_is_damaged(tmp_path):

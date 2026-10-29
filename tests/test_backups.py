@@ -9,6 +9,7 @@ import sqlite3
 from app import config, db as app_db, paths, prefs, utils
 import app.services.backup as sab
 from app.api import Api
+from app.services import restore
 from app.services.backup import (
     _clamp_backup_keep,
     _list_backup_files,
@@ -19,6 +20,186 @@ from app.services.backup import (
     _make_prerestore_backup,
     _run_backup_with_fallback,
 )
+
+
+class _SaveDialogWindow:
+    def __init__(self, path):
+        self.path = path
+
+    def create_file_dialog(self, *args, **kwargs):
+        return self.path
+
+
+def _backup_copy_api(tmp_path, destination):
+    db_path = tmp_path / "live.db"
+    api = Api("test")
+    api.set_conn(app_db.open_db(str(db_path)))
+    api.set_db_path(str(db_path))
+    api.set_window(_SaveDialogWindow(destination))
+    return api, db_path
+
+
+def _table_rows(path, table):
+    conn = sqlite3.connect(path)
+    try:
+        return conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall()
+    finally:
+        conn.close()
+
+
+# --- manually saved backup copies ---------------------------------------------
+
+def test_save_backup_copy_matches_live_data(tmp_path):
+    destination_dir = tmp_path / "out"
+    destination_dir.mkdir()
+    destination = destination_dir / "SAB_Backup_01012026.db"
+    api, db_path = _backup_copy_api(tmp_path, str(destination))
+    account = api.create_account("Checking", "100.00", "2024-01-01")["account"]
+    assert api.add_category("Household")["ok"] is True
+    assert api.add_transaction(
+        account["id"], "2024-01-02", "Store", "Household", "", "12.34", "withdraw"
+    )["ok"] is True
+    assert api.add_autopay(
+        account["id"], "Rent", "Household", "", "500.00", "withdraw",
+        "2099-01-01", "2099-01-02",
+    )["ok"] is True
+
+    result = api.save_backup_copy()
+
+    assert result == {"ok": True, "path": str(destination)}
+    assert destination.exists()
+    assert restore._check_backup(str(destination)) is None
+    for table in ("accounts", "categories", "transactions", "autopays"):
+        assert _table_rows(db_path, table) == _table_rows(destination, table)
+    assert not list(destination_dir.glob(".balancer_*"))
+    assert not list(tmp_path.glob(".balancer_*"))
+    api.close_conn()
+
+
+def test_save_backup_copy_empty_database_succeeds(tmp_path):
+    destination = tmp_path / "out.db"
+    api, _ = _backup_copy_api(tmp_path, str(destination))
+
+    assert api.save_backup_copy() == {"ok": True, "path": str(destination)}
+    assert restore._check_backup(str(destination)) is None
+    api.close_conn()
+
+
+def test_save_backup_copy_cancel_writes_nothing(tmp_path):
+    api, _ = _backup_copy_api(tmp_path, None)
+
+    assert api.save_backup_copy() == {"ok": True, "cancelled": True}
+    assert [path.name for path in tmp_path.iterdir()] == ["live.db"]
+    api.close_conn()
+
+
+def test_save_backup_copy_appended_extension_refuses_existing_file(tmp_path):
+    selected = tmp_path / "backup"
+    existing = tmp_path / "backup.db"
+    existing.write_bytes(b"keep this")
+    api, _ = _backup_copy_api(tmp_path, str(selected))
+
+    assert api.save_backup_copy() == {
+        "ok": False,
+        "error": "A file with that name already exists. Choose a different name.",
+    }
+    assert existing.read_bytes() == b"keep this"
+    api.close_conn()
+
+
+def test_save_backup_copy_refuses_live_database_path(tmp_path):
+    live_path = tmp_path / "live.db"
+    api, _ = _backup_copy_api(tmp_path, str(live_path))
+    original = live_path.read_bytes()
+
+    assert api.save_backup_copy() == {"ok": False, "error": "Choose a different place to save the backup."}
+    assert live_path.read_bytes() == original
+    api.close_conn()
+
+
+def test_save_backup_copy_unwritable_destination(tmp_path, monkeypatch):
+    destination = tmp_path / "out" / "backup.db"
+    api, _ = _backup_copy_api(tmp_path, str(destination))
+    monkeypatch.setattr(sab.shutil, "copyfile", lambda *args: (_ for _ in ()).throw(PermissionError()))
+
+    assert api.save_backup_copy() == {"ok": False, "error": "Couldn't save the backup."}
+    assert not list(tmp_path.glob(".balancer_*"))
+    assert not (tmp_path / "out").exists()
+    api.close_conn()
+
+
+def test_save_backup_copy_failed_check_keeps_existing_file(tmp_path, monkeypatch):
+    destination = tmp_path / "backup.db"
+    destination.write_bytes(b"existing")
+    api, _ = _backup_copy_api(tmp_path, str(destination))
+    real_check = sab.restore._check_backup
+    calls = []
+
+    def reject_candidate(path):
+        calls.append(path)
+        return "bad" if ".balancer_backup_candidate_" in path else real_check(path)
+
+    monkeypatch.setattr(sab.restore, "_check_backup", reject_candidate)
+
+    assert api.save_backup_copy() == {"ok": False, "error": "Couldn't save the backup."}
+    assert destination.read_bytes() == b"existing"
+    assert not list(tmp_path.glob(".balancer_backup_candidate_*"))
+    api.close_conn()
+
+
+def test_save_backup_copy_replace_failure_keeps_existing_file(tmp_path, monkeypatch):
+    destination = tmp_path / "backup.db"
+    destination.write_bytes(b"existing")
+    api, _ = _backup_copy_api(tmp_path, str(destination))
+    monkeypatch.setattr(sab.os, "replace", lambda *args: (_ for _ in ()).throw(PermissionError()))
+
+    assert api.save_backup_copy() == {"ok": False, "error": "Couldn't save the backup."}
+    assert destination.read_bytes() == b"existing"
+    assert not list(tmp_path.glob(".balancer_backup_candidate_*"))
+    api.close_conn()
+
+
+def test_save_backup_copy_reports_cleanup_failure(tmp_path, monkeypatch):
+    destination = tmp_path / "backup.db"
+    api, _ = _backup_copy_api(tmp_path, str(destination))
+    monkeypatch.setattr(sab.db, "_remove_db_artifacts", lambda path: [f"{path}: PermissionError"])
+
+    result = api.save_backup_copy()
+
+    assert result["ok"] is True
+    assert result["cleanup_warning"] == (
+        "A temporary backup file couldn't be removed from the app's data folder. "
+        "You can delete it yourself."
+    )
+    api.close_conn()
+
+
+def test_save_backup_copy_no_connection(tmp_path):
+    destination = tmp_path / "backup.db"
+    api = Api("test")
+    api.set_db_path(str(tmp_path / "live.db"))
+    api.set_window(_SaveDialogWindow(str(destination)))
+
+    assert api.save_backup_copy() == {
+        "ok": False,
+        "error": "The database isn't available right now. Please restart the app.",
+    }
+    assert not list(tmp_path.iterdir())
+
+
+def test_save_backup_copy_log_has_no_path(tmp_path, monkeypatch):
+    secret_dir = tmp_path / "ZZsecretZZ"
+    secret_dir.mkdir()
+    destination = secret_dir / "backup.db"
+    api, _ = _backup_copy_api(tmp_path, str(destination))
+    logged = []
+    api.log = logged.append
+
+    assert api.save_backup_copy()["ok"] is True
+    monkeypatch.setattr(sab.os, "replace", lambda *args: (_ for _ in ()).throw(PermissionError()))
+    assert api.save_backup_copy()["ok"] is False
+    assert all("ZZsecretZZ" not in message for message in logged)
+    api.close_conn()
 
 
 # --- _clamp_backup_keep -------------------------------------------------------

@@ -15,6 +15,23 @@ class StartupResult:
     folders: list[str]
 
 
+def exit_backup_needed(api, db_path: str) -> bool:
+    """Return whether an exit backup should be taken without blocking shutdown."""
+    try:
+        conn = db._readonly_connection(db_path)
+        try:
+            has_accounts = db.has_accounts(conn)
+        finally:
+            conn.close()
+    except Exception as error:
+        api.log(f"Exit backup account check failed: {type(error).__name__}")
+        return True
+    if not has_accounts:
+        api.log("Exit backup skipped: no accounts yet")
+        return False
+    return True
+
+
 def prepare_database(api, db_path: str) -> StartupResult:
     """Recover, check, and snapshot an existing database before open_db."""
     if not os.path.exists(db_path):
@@ -38,6 +55,12 @@ def prepare_database(api, db_path: str) -> StartupResult:
         return StartupResult("continue", [])
 
     try:
+        try:
+            if not db.has_accounts(recovery.conn):
+                api.log("Launch backup skipped: no accounts yet")
+                return StartupResult("continue", [])
+        except Exception as error:
+            api.log(f"Launch backup account check failed: {type(error).__name__}")
         # Launch backup precedes open_db after recovery, so it remains a
         # pre-migration snapshot while SQLite has already resolved any hot journal.
         ok, used_fallback, actual_dir, prune_failed, cleanup_failed = backup._run_backup_with_fallback(

@@ -1,6 +1,7 @@
 """Restore safety checks. Every database and backup lives under tmp_path."""
 import os
 import sqlite3
+import stat
 from pathlib import Path
 
 import pytest
@@ -42,6 +43,13 @@ def _make_api(tmp_path, monkeypatch):
     return api, db_path, backups
 
 
+def _make_empty_api(tmp_path, monkeypatch):
+    api, db_path, backups = _make_api(tmp_path, monkeypatch)
+    api._conn.execute("DELETE FROM accounts")
+    api._conn.commit()
+    return api, db_path, backups
+
+
 def _backup_from_conn(conn, path):
     dest = sqlite3.connect(path)
     try:
@@ -71,13 +79,13 @@ def _insert_transaction(conn, account_id=1, payee="Original", estimated=0, sort_
     conn.commit()
 
 
-def _insert_autopay(conn, payee="Rent", is_variable=0):
+def _insert_autopay(conn, account_id=1, payee="Rent", is_variable=0):
     conn.execute(
         "INSERT INTO autopays "
         "(account_id, payee, category, notes, amount_cents, next_pay_date, next_post_date, "
         "pay_day, post_day, is_variable, created_at) "
-        "VALUES (1, ?, 'Home', 'note', -100000, '2024-02-01', '2024-02-01', 1, 1, ?, '2024-01-01T00:00:00')",
-        (payee, is_variable),
+        "VALUES (?, ?, 'Home', 'note', -100000, '2024-02-01', '2024-02-01', 1, 1, ?, '2024-01-01T00:00:00')",
+        (account_id, payee, is_variable),
     )
     conn.commit()
 
@@ -93,6 +101,42 @@ def _assert_no_restore_temps(tmp_path):
         path for path in tmp_path.iterdir()
         if path.name.startswith(".balancer_restore_") or path.name.endswith("-journal")
     ]
+
+
+class _RestoreWindow:
+    def __init__(self, path):
+        self.path = path
+
+    def create_file_dialog(self, *_args, **_kwargs):
+        return str(self.path)
+
+
+def _choose_restore_file(api, path):
+    api.set_window(_RestoreWindow(path))
+    return api.choose_restore_file()
+
+
+def _outside_backup(tmp_path, api, name="SAB_Backup_01012026.db"):
+    outside = tmp_path / "outside"
+    outside.mkdir(exist_ok=True)
+    path = outside / name
+    _backup_from_conn(api._conn, str(path))
+    return path
+
+
+def _outside_backup_with_restore_data(tmp_path, api):
+    path = _outside_backup(tmp_path, api)
+    conn = sqlite3.connect(path)
+    try:
+        _insert_account(conn, "Backup One")
+        _insert_account(conn, "Backup Two")
+        account_id = conn.execute("SELECT id FROM accounts WHERE name='Backup One'").fetchone()[0]
+        conn.execute("INSERT INTO categories (name) VALUES ('Backup category')")
+        _insert_transaction(conn, account_id=account_id, payee="Backup transaction")
+        _insert_autopay(conn, account_id=account_id, payee="Backup autopay")
+    finally:
+        conn.close()
+    return path
 
 
 def _make_versioned_backup(path, version):
@@ -557,6 +601,10 @@ def test_remove_stale_restore_files_only_matches_exact_restore_temp_names(tmp_pa
         ".balancer_restore_stage_abc_123.db-journal",
         ".balancer_restore_rollback_abc_123.db",
         ".balancer_restore_rollback_abc_123.db-journal",
+        ".balancer_restore_import_abc123.db",
+        ".balancer_restore_import_abc123.db-journal",
+        ".balancer_save_snapshot_abc123.db",
+        ".balancer_save_snapshot_abc123.db-journal",
     ]
     untouched = [
         ".balancer_restore_other_abc.db",
@@ -832,3 +880,486 @@ def test_kept_damaged_files_survive_restore_temp_cleanup(tmp_path):
     assert restore._remove_stale_restore_files(str(tmp_path)) == (0, [])
     assert kept.exists()
     assert journal.exists()
+
+
+def test_restore_from_file_round_trip(tmp_path, monkeypatch):
+    api, db_path, _ = _make_api(tmp_path, monkeypatch)
+    picked = _outside_backup(tmp_path, api)
+    conn = sqlite3.connect(picked)
+    try:
+        _insert_account(conn, "Backup")
+    finally:
+        conn.close()
+    original = picked.read_bytes()
+
+    preview = _choose_restore_file(api, picked)
+    result = api.restore_from_file(preview["token"], preview["fingerprint"])
+
+    assert preview["ok"] is True
+    assert preview["source_name"] == picked.name
+    assert result["ok"] is True
+    assert _account_names(db_path) == ["Live", "Backup"]
+    assert api._restore_import is None
+    assert picked.read_bytes() == original
+    _assert_no_restore_temps(tmp_path)
+    api.close_conn()
+
+
+def test_restore_from_file_into_empty_database_lands_backup(tmp_path, monkeypatch):
+    api, db_path, _ = _make_empty_api(tmp_path, monkeypatch)
+    picked = _outside_backup_with_restore_data(tmp_path, api)
+
+    preview = _choose_restore_file(api, picked)
+    result = api.restore_from_file(preview["token"], preview["fingerprint"])
+
+    assert result["ok"] is True
+    assert db.has_accounts(api._conn) is True
+    assert _account_names(db_path) == ["Backup One", "Backup Two"]
+    conn = sqlite3.connect(db_path)
+    try:
+        assert conn.execute("SELECT name FROM categories WHERE name='Backup category'").fetchone()
+        assert conn.execute("SELECT payee FROM transactions").fetchone()[0] == "Backup transaction"
+        assert conn.execute("SELECT payee FROM autopays").fetchone()[0] == "Backup autopay"
+    finally:
+        conn.close()
+    api.close_conn()
+
+
+def test_restore_into_empty_database_takes_no_safety_backup(tmp_path, monkeypatch):
+    api, _, backups = _make_empty_api(tmp_path, monkeypatch)
+    picked = _outside_backup_with_restore_data(tmp_path, api)
+
+    preview = _choose_restore_file(api, picked)
+    result = api.restore_from_file(preview["token"], preview["fingerprint"])
+
+    assert result["ok"] is True
+    assert not list(backups.glob("balancer_prerestore_*.db"))
+    _assert_no_restore_temps(tmp_path)
+    api.close_conn()
+
+
+def test_restore_with_accounts_still_takes_safety_backup(tmp_path, monkeypatch):
+    api, _, backups = _make_api(tmp_path, monkeypatch)
+    _backup_with_account(api, backups)
+
+    result = api.restore_backup(BACKUP_NAME)
+
+    assert result["ok"] is True
+    assert list(backups.glob("balancer_prerestore_*.db"))
+    api.close_conn()
+
+
+def test_restore_from_file_refuses_backup_with_no_accounts_into_empty_database(tmp_path, monkeypatch):
+    api, db_path, backups = _make_empty_api(tmp_path, monkeypatch)
+    picked = _outside_backup(tmp_path, api)
+    before = Path(db_path).read_bytes()
+
+    preview = _choose_restore_file(api, picked)
+    result = api.restore_from_file(preview["token"], preview["fingerprint"])
+
+    assert result == {
+        "ok": False,
+        "error": "That backup has no accounts in it.",
+        "selection_cleared": True,
+    }
+    assert Path(db_path).read_bytes() == before
+    assert not list(backups.glob("balancer_prerestore_*.db"))
+    _assert_no_restore_temps(tmp_path)
+    api.close_conn()
+
+
+def test_restore_backup_list_refuses_backup_with_no_accounts_into_empty_database(tmp_path, monkeypatch):
+    api, db_path, backups = _make_empty_api(tmp_path, monkeypatch)
+    _backup_from_conn(api._conn, str(backups / BACKUP_NAME))
+    before = Path(db_path).read_bytes()
+
+    result = api.restore_backup(BACKUP_NAME)
+
+    assert result == {"ok": False, "error": "That backup has no accounts in it."}
+    assert Path(db_path).read_bytes() == before
+    assert not list(backups.glob("balancer_prerestore_*.db"))
+    _assert_no_restore_temps(tmp_path)
+    api.close_conn()
+
+
+def test_restore_into_live_with_accounts_accepts_backup_with_no_accounts(tmp_path, monkeypatch):
+    api, db_path, _ = _make_api(tmp_path, monkeypatch)
+    empty_path = tmp_path / "empty.db"
+    empty_conn = db.open_db(str(empty_path))
+    try:
+        picked = tmp_path / "outside" / "SAB_Backup_01012026.db"
+        picked.parent.mkdir()
+        _backup_from_conn(empty_conn, str(picked))
+    finally:
+        empty_conn.close()
+
+    preview = _choose_restore_file(api, picked)
+    result = api.restore_from_file(preview["token"], preview["fingerprint"])
+
+    assert result["ok"] is True
+    assert db.has_accounts(api._conn) is False
+    assert _account_names(db_path) == []
+    api.close_conn()
+
+
+def test_restore_from_file_upgrades_older_backup_into_empty_database(tmp_path, monkeypatch):
+    api, db_path, _ = _make_empty_api(tmp_path, monkeypatch)
+    picked = tmp_path / "outside" / "SAB_Backup_01012026.db"
+    picked.parent.mkdir()
+    _make_versioned_backup(picked, 0)
+
+    preview = _choose_restore_file(api, picked)
+    result = api.restore_from_file(preview["token"], preview["fingerprint"])
+
+    assert result["ok"] is True
+    assert _account_names(db_path) == ["Version 0"]
+    _assert_no_restore_temps(tmp_path)
+    api.close_conn()
+
+
+def test_restore_into_empty_database_reports_retry_when_rollback_reopens(tmp_path, monkeypatch):
+    api, db_path, _ = _make_empty_api(tmp_path, monkeypatch)
+    picked = _outside_backup_with_restore_data(tmp_path, api)
+    preview = _choose_restore_file(api, picked)
+    real_open_db = db.open_db
+    failed = False
+
+    def fail_once_after_replacement(path):
+        nonlocal failed
+        conn = real_open_db(path)
+        if path == db_path and not failed:
+            failed = True
+            conn.close()
+            raise RuntimeError("reopen failed")
+        return conn
+
+    monkeypatch.setattr(db, "open_db", fail_once_after_replacement)
+    result = api.restore_from_file(preview["token"], preview["fingerprint"])
+
+    assert result["error"] == "The restore failed. Nothing was changed, so you can try again."
+    assert db.has_accounts(api._conn) is False
+    _assert_no_restore_temps(tmp_path)
+    api.close_conn()
+
+
+def test_restore_into_empty_database_reports_restart_when_rollback_reopen_fails(tmp_path, monkeypatch):
+    api, db_path, _ = _make_empty_api(tmp_path, monkeypatch)
+    picked = _outside_backup_with_restore_data(tmp_path, api)
+    preview = _choose_restore_file(api, picked)
+    real_open_db = db.open_db
+
+    def fail_live_reopens(path):
+        conn = real_open_db(path)
+        if path == db_path:
+            conn.close()
+            raise RuntimeError("reopen failed")
+        return conn
+
+    monkeypatch.setattr(db, "open_db", fail_live_reopens)
+    result = api.restore_from_file(preview["token"], preview["fingerprint"])
+
+    assert result["error"] == (
+        "The restore couldn't be finished. Close the app and open it again. "
+        "Your backup file was not changed."
+    )
+    assert api._conn is None
+    _assert_no_restore_temps(tmp_path)
+
+
+def test_restore_into_empty_database_reports_restart_when_rollback_replace_fails(tmp_path, monkeypatch):
+    api, db_path, _ = _make_empty_api(tmp_path, monkeypatch)
+    picked = _outside_backup_with_restore_data(tmp_path, api)
+    preview = _choose_restore_file(api, picked)
+    real_open_db = db.open_db
+    real_replace = restore.os.replace
+    failed = False
+
+    def fail_open_after_replacement(path):
+        nonlocal failed
+        conn = real_open_db(path)
+        if path == db_path and not failed:
+            failed = True
+            conn.close()
+            raise RuntimeError("reopen failed")
+        return conn
+
+    def fail_rollback_replace(src, dst):
+        if os.path.basename(src).startswith(".balancer_restore_rollback_"):
+            raise OSError("rollback replace failed")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(db, "open_db", fail_open_after_replacement)
+    monkeypatch.setattr(restore.os, "replace", fail_rollback_replace)
+    result = api.restore_from_file(preview["token"], preview["fingerprint"])
+
+    assert result["error"] == (
+        "The restore couldn't be finished. Close the app and open it again. "
+        "Your backup file was not changed."
+    )
+    assert api._conn is None
+    _assert_no_restore_temps(tmp_path)
+
+
+def test_restore_uses_safety_backup_when_live_account_check_raises(tmp_path, monkeypatch):
+    api, _, backups = _make_api(tmp_path, monkeypatch)
+    _backup_with_account(api, backups)
+    real_has_accounts = db.has_accounts
+
+    def fail_for_live_connection(conn):
+        if conn is api._conn:
+            raise RuntimeError("live account check failed")
+        return real_has_accounts(conn)
+
+    monkeypatch.setattr(db, "has_accounts", fail_for_live_connection)
+    result = api.restore_backup(BACKUP_NAME)
+
+    assert result["ok"] is True
+    assert list(backups.glob("balancer_prerestore_*.db"))
+    api.close_conn()
+
+
+@pytest.mark.parametrize("version", [0, 1, 2])
+def test_restore_from_file_upgrades_each_older_schema_version(tmp_path, monkeypatch, version):
+    api, db_path, _ = _make_api(tmp_path, monkeypatch)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    picked = outside / "SAB_Backup_01012026.db"
+    _make_versioned_backup(picked, version)
+
+    preview = _choose_restore_file(api, picked)
+    result = api.restore_from_file(preview["token"], preview["fingerprint"])
+
+    assert result["ok"] is True
+    assert _account_names(db_path) == [f"Version {version}"]
+    conn = sqlite3.connect(db_path)
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == config.SCHEMA_VERSION
+    finally:
+        conn.close()
+    _assert_no_restore_temps(tmp_path)
+    api.close_conn()
+
+
+def test_restore_from_file_upgrades_read_only_older_backup(tmp_path, monkeypatch):
+    api, db_path, _ = _make_api(tmp_path, monkeypatch)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    picked = outside / "SAB_Backup_01012026.db"
+    _make_versioned_backup(picked, 0)
+    original = picked.read_bytes()
+    os.chmod(picked, stat.S_IREAD)
+    try:
+        preview = _choose_restore_file(api, picked)
+        result = api.restore_from_file(preview["token"], preview["fingerprint"])
+    finally:
+        os.chmod(picked, stat.S_IWRITE)
+
+    assert result["ok"] is True
+    assert _account_names(db_path) == ["Version 0"]
+    assert picked.read_bytes() == original
+    api.close_conn()
+
+
+def test_restore_from_file_refuses_newer_version(tmp_path, monkeypatch):
+    api, db_path, _ = _make_api(tmp_path, monkeypatch)
+    picked = _outside_backup(tmp_path, api)
+    conn = sqlite3.connect(picked)
+    conn.execute(f"PRAGMA user_version = {config.SCHEMA_VERSION + 1}")
+    conn.commit()
+    conn.close()
+    before = Path(db_path).read_bytes()
+
+    result = _choose_restore_file(api, picked)
+
+    assert result["ok"] is False
+    assert Path(db_path).read_bytes() == before
+    assert api._restore_import is None
+    _assert_no_restore_temps(tmp_path)
+    api.close_conn()
+
+
+@pytest.mark.parametrize("contents", [b"text", b"SQLite format 3\x00", b"SQLite format 3\x00" + b"garbage"])
+def test_restore_from_file_refuses_bad_files(tmp_path, monkeypatch, contents):
+    api, db_path, _ = _make_api(tmp_path, monkeypatch)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    picked = outside / "SAB_Backup_01012026.db"
+    picked.write_bytes(contents)
+    before = Path(db_path).read_bytes()
+
+    result = _choose_restore_file(api, picked)
+
+    assert result["ok"] is False
+    assert Path(db_path).read_bytes() == before
+    assert api._restore_import is None
+    _assert_no_restore_temps(tmp_path)
+    api.close_conn()
+
+
+def test_restore_from_file_refuses_truncated_real_backup(tmp_path, monkeypatch):
+    api, db_path, _ = _make_api(tmp_path, monkeypatch)
+    picked = _outside_backup(tmp_path, api)
+    data = picked.read_bytes()
+    picked.write_bytes(data[: len(data) // 2])
+    before = Path(db_path).read_bytes()
+
+    result = _choose_restore_file(api, picked)
+
+    assert result["ok"] is False
+    assert Path(db_path).read_bytes() == before
+    assert api._restore_import is None
+    _assert_no_restore_temps(tmp_path)
+    api.close_conn()
+
+def test_restore_from_file_refuses_live_database(tmp_path, monkeypatch):
+    api, db_path, _ = _make_api(tmp_path, monkeypatch)
+
+    result = _choose_restore_file(api, Path(db_path))
+
+    assert result == {"ok": False, "error": "That's the app's live database. Choose a backup file instead."}
+    assert api._restore_import is None
+    api.close_conn()
+
+
+def test_restore_from_file_refuses_live_database_hard_link(tmp_path, monkeypatch):
+    api, db_path, _ = _make_api(tmp_path, monkeypatch)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked = outside / "SAB_Backup_01012026.db"
+    try:
+        os.link(db_path, linked)
+    except OSError:
+        pytest.skip("hard links are unavailable")
+
+    result = _choose_restore_file(api, linked)
+
+    assert result == {"ok": False, "error": "That's the app's live database. Choose a backup file instead."}
+    api.close_conn()
+
+
+def test_restore_from_file_refuses_low_disk_space(tmp_path, monkeypatch):
+    api, _, _ = _make_api(tmp_path, monkeypatch)
+    picked = _outside_backup(tmp_path, api)
+    usage = restore.shutil.disk_usage(str(tmp_path))
+    monkeypatch.setattr(restore.shutil, "disk_usage", lambda _: usage._replace(free=0))
+
+    result = _choose_restore_file(api, picked)
+
+    assert result["ok"] is False
+    assert api._restore_import is None
+    _assert_no_restore_temps(tmp_path)
+    api.close_conn()
+
+
+def test_restore_from_file_copy_failure_leaves_nothing(tmp_path, monkeypatch):
+    api, _, _ = _make_api(tmp_path, monkeypatch)
+    picked = _outside_backup(tmp_path, api)
+
+    def fail_copy(_source, dest):
+        Path(dest).write_bytes(b"partial")
+        raise OSError("full")
+
+    monkeypatch.setattr(restore.shutil, "copyfile", fail_copy)
+    result = _choose_restore_file(api, picked)
+
+    assert result == {"ok": False, "error": "Couldn't copy that file. Nothing was changed."}
+    assert api._restore_import is None
+    _assert_no_restore_temps(tmp_path)
+    api.close_conn()
+
+
+def test_restore_from_file_rejects_wrong_or_stale_token(tmp_path, monkeypatch):
+    api, db_path, _ = _make_api(tmp_path, monkeypatch)
+    first = _outside_backup(tmp_path, api, "SAB_Backup_01012026.db")
+    second = _outside_backup(tmp_path, api, "SAB_Backup_01022026.db")
+    one = _choose_restore_file(api, first)
+    two = _choose_restore_file(api, second)
+    before = Path(db_path).read_bytes()
+
+    for token, fingerprint in (("wrong", two["fingerprint"]), (two["token"], None), (two["token"], "wrong"), (one["token"], one["fingerprint"])):
+        assert api.restore_from_file(token, fingerprint)["ok"] is False
+        assert Path(db_path).read_bytes() == before
+    assert api.restore_from_file(two["token"], two["fingerprint"])["ok"] is True
+    api.close_conn()
+
+
+def test_restore_from_file_second_pick_replaces_first(tmp_path, monkeypatch):
+    api, _, _ = _make_api(tmp_path, monkeypatch)
+    first = _outside_backup(tmp_path, api, "SAB_Backup_01012026.db")
+    second = _outside_backup(tmp_path, api, "SAB_Backup_01022026.db")
+
+    _choose_restore_file(api, first)
+    _choose_restore_file(api, second)
+
+    assert len(list(tmp_path.glob(".balancer_restore_import_*.db"))) == 1
+    api.discard_restore_file(api._restore_import["token"])
+    api.close_conn()
+
+
+def test_discard_restore_file_removes_copy_and_ignores_stale_token(tmp_path, monkeypatch):
+    api, _, _ = _make_api(tmp_path, monkeypatch)
+    picked = _outside_backup(tmp_path, api)
+    preview = _choose_restore_file(api, picked)
+    held = Path(api._restore_import["path"])
+
+    assert api.discard_restore_file("stale") == {"ok": True}
+    assert held.exists()
+    assert api.discard_restore_file(preview["token"]) == {"ok": True}
+    assert not held.exists()
+    api.close_conn()
+
+
+@pytest.mark.parametrize("failure", ["replace", "reopen", "safety"])
+def test_restore_from_file_failure_paths_clear_selection(tmp_path, monkeypatch, failure):
+    api, db_path, _ = _make_api(tmp_path, monkeypatch)
+    picked = _outside_backup(tmp_path, api)
+    preview = _choose_restore_file(api, picked)
+    if failure == "replace":
+        real_replace = restore.os.replace
+        monkeypatch.setattr(
+            restore.os, "replace",
+            lambda src, dst: (_ for _ in ()).throw(OSError("replace"))
+            if os.path.basename(src).startswith(".balancer_restore_stage_") else real_replace(src, dst),
+        )
+    elif failure == "reopen":
+        real_open_db = db.open_db
+        failed = False
+        def fail_open(path):
+            nonlocal failed
+            conn = real_open_db(path)
+            if path == db_path and not failed:
+                failed = True
+                conn.close()
+                raise RuntimeError("reopen")
+            return conn
+        monkeypatch.setattr(db, "open_db", fail_open)
+    else:
+        monkeypatch.setattr(backup, "_make_prerestore_backup", lambda *_: (None, []))
+
+    result = api.restore_from_file(preview["token"], preview["fingerprint"])
+
+    assert result["ok"] is False
+    assert result["selection_cleared"] is True
+    assert _account_names(db_path) == ["Live"]
+    assert api._restore_import is None
+    _assert_no_restore_temps(tmp_path)
+    if api._conn is not None:
+        api.close_conn()
+
+
+def test_restore_from_file_log_has_no_path(tmp_path, monkeypatch):
+    api, _, _ = _make_api(tmp_path, monkeypatch)
+    outside = tmp_path / "ZZsecretZZ"
+    outside.mkdir()
+    picked = outside / "SAB_Backup_01012026.db"
+    _backup_from_conn(api._conn, str(picked))
+    messages = []
+    monkeypatch.setattr(api, "log", messages.append)
+
+    preview = _choose_restore_file(api, picked)
+    assert api.restore_from_file(preview["token"], preview["fingerprint"])["ok"] is True
+    picked.write_bytes(b"not sqlite")
+    assert _choose_restore_file(api, picked)["ok"] is False
+
+    assert all("ZZsecretZZ" not in message for message in messages)
+    api.close_conn()

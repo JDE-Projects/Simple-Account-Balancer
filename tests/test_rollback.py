@@ -326,8 +326,8 @@ def test_every_decorated_bridge_method_keeps_its_happy_path_return_shape(tmp_pat
 # Bridge methods that never reach the database. Every other public Api method
 # must carry @_database_call so it runs under the lock.
 _NO_DATABASE_METHODS = {
-    "set_window", "set_db_path", "export_csv", "save_theme",
-    "choose_backup_folder", "reset_backup_folder", "set_backup_keep",
+    "set_window", "set_db_path", "export_csv", "save_backup_copy", "save_theme",
+    "choose_backup_folder", "choose_restore_file", "reset_backup_folder", "set_backup_keep",
     "list_backups", "open_url", "check_update", "set_debug", "log",
 }
 
@@ -343,3 +343,5 @@ def test_every_database_method_holds_the_lock():
     ]
     assert unlocked == []
     assert hasattr(sab.Api._export_csv_snapshot, "__wrapped__")
+    assert hasattr(sab.Api._snapshot_for_backup_copy, "__wrapped__")
+    assert hasattr(sab.Api._publish_restore_import, "__wrapped__")

@@ -40,6 +40,8 @@ If you enjoyed this project and would like to buy me a coffee, check out my [Ko-
   row names the account, the range, and the export date.
 - Automatic rolling backups on launch and exit; backups live next to the
   app by default, or in any folder you choose.
+- Save a backup copy anywhere you pick, such as a USB drive, and restore it
+  later, including on a new computer straight from the first-launch screen.
 - Local only - your data never leaves the machine.
 - Checks GitHub Releases for a newer version (silent at startup; on demand it explains why a check failed).
 
@@ -122,6 +124,32 @@ pipeline from this repo. You can also check the file against the published
    unexplained difference is nonzero, the finder uses it automatically unless
    you enter a different amount.
 6. Export any date range to CSV from the Export CSV button in the register view.
+
+### Backups and restore
+- The app backs up every account automatically when it opens and closes,
+  keeping the newest few (set the count and the folder in account
+  settings). No backup is taken while there are no accounts yet.
+- **Save backup...** in account settings writes a copy of all your data to
+  any place you pick, such as a USB drive or a cloud folder.
+- **Restore from backup** in account settings lists the automatic backups.
+  **Restore from a file...** on that list takes a backup `.db` file from
+  anywhere. Before replacing anything, the app checks the file, shows how
+  its accounts compare with yours, and saves a safety backup of your current
+  data.
+- A backup made by an older version is brought up to date as it is
+  restored. A backup made by a newer version is refused: update the app
+  first, then restore it.
+- Backups hold your accounts and transactions only. App settings, such as
+  the backup folder and the window size and position, stay with each
+  computer.
+
+### Moving to a new computer or reinstalling
+1. On the old computer, open account settings and use **Save backup...** to
+   save a copy somewhere you can reach from the new one.
+2. Install the app on the new computer and open it.
+3. On the first-launch screen, choose **Restore from a backup...** and pick
+   the saved file. A backup with no accounts in it is refused here, since
+   there would be nothing to restore.
 
 ## Security and privacy
 - Everything stays in the SQLite file next to the exe.

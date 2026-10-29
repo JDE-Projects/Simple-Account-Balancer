@@ -3,12 +3,15 @@
 import datetime
 import os
 import re
+import shutil
 import sqlite3
+import tempfile
 import uuid
 
 import webview
 
 from app import config, db, paths, prefs, utils
+from app.services import restore
 
 # Regular backups: balancer_YYYYMMDD_HHMMSS_ffffff.db
 # Pre-restore safety backups: balancer_prerestore_YYYYMMDD_HHMMSS_ffffff.db
@@ -156,6 +159,120 @@ def _candidate_is_valid(candidate_path: str) -> bool:
                 conn.close()
             except Exception:
                 pass
+
+
+def _snapshot_for_backup_copy(api):
+    """Create a consistent local snapshot while the database lock is held."""
+    if api._conn is None or not api._db_path:
+        return {
+            "ok": False,
+            "error": "The database isn't available right now. Please restart the app.",
+        }
+    snapshot_path = None
+    dst = None
+    try:
+        fd, snapshot_path = tempfile.mkstemp(
+            prefix=".balancer_save_snapshot_",
+            suffix=".db",
+            dir=os.path.dirname(api._db_path),
+        )
+        os.close(fd)
+        dst = sqlite3.connect(snapshot_path)
+        api._conn.backup(dst)
+        dst.close()
+        return {"ok": True, "snapshot": snapshot_path}
+    except Exception as e:
+        if dst is not None:
+            try:
+                dst.close()
+            except Exception:
+                pass
+        if snapshot_path is not None:
+            db._remove_db_artifacts(snapshot_path)
+        api.log(f"save_backup_copy snapshot failed: {type(e).__name__}")
+        return {"ok": False, "error": "Couldn't save the backup."}
+
+
+def _cleanup_warning(api, snapshot_path, candidate_path, published):
+    """Remove temporary files and return a safe warning when cleanup fails."""
+    failures = [("the app's data folder", db._remove_db_artifacts(snapshot_path))]
+    if candidate_path is not None and not published:
+        failures.append(("the folder you picked", db._remove_db_artifacts(candidate_path)))
+    failed = [(folder, entries) for folder, entries in failures if entries]
+    if not failed:
+        return None
+    api.log(f"Backup copy cleanup failed: {sum(len(entries) for _, entries in failed)}")
+    folder = next(
+        (folder for folder, _ in failed if folder == "the folder you picked"), failed[0][0]
+    )
+    return f"A temporary backup file couldn't be removed from {folder}. You can delete it yourself."
+
+
+def _copy_backup_snapshot(api, snapshot_path: str, dest: str):
+    """Validate and atomically publish a user-requested backup copy."""
+    candidate_path = None
+    published = False
+    result = None
+    try:
+        if restore._check_backup(snapshot_path) is not None:
+            result = {"ok": False, "error": "Couldn't save the backup."}
+        else:
+            candidate_path = os.path.join(
+                os.path.dirname(dest), f".balancer_backup_candidate_{uuid.uuid4().hex}.db"
+            )
+            shutil.copyfile(snapshot_path, candidate_path)
+            if restore._check_backup(candidate_path) is not None:
+                result = {"ok": False, "error": "Couldn't save the backup."}
+            else:
+                os.replace(candidate_path, dest)
+                published = True
+                result = {"ok": True, "path": dest}
+                api.log("Backup copy saved")
+    except Exception as e:
+        api.log(f"save_backup_copy failed: {type(e).__name__}")
+        result = {"ok": False, "error": "Couldn't save the backup."}
+    finally:
+        warning = _cleanup_warning(api, snapshot_path, candidate_path, published)
+        if warning:
+            result["cleanup_warning"] = warning
+    return result
+
+
+def save_backup_copy(api):
+    """Save a validated copy of the live database through a native dialog."""
+    try:
+        documents_dir = os.path.join(os.path.expanduser("~"), "Documents")
+        start_dir = documents_dir if os.path.isdir(documents_dir) else paths.app_dir()
+        selected = api._window.create_file_dialog(
+            webview.FileDialog.SAVE,
+            directory=start_dir,
+            save_filename=f"SAB_Backup_{datetime.date.today():%m%d%Y}.db",
+            file_types=("Backup Files (*.db)",),
+        )
+        if not selected:
+            return {"ok": True, "cancelled": True}
+        dest = selected[0] if isinstance(selected, (list, tuple)) else selected
+        if not dest:
+            return {"ok": True, "cancelled": True}
+        if not dest.lower().endswith(".db"):
+            dest += ".db"
+            if os.path.exists(dest):
+                return {
+                    "ok": False,
+                    "error": "A file with that name already exists. Choose a different name.",
+                }
+        if api._db_path:
+            normalized_dest = os.path.normcase(os.path.abspath(dest))
+            normalized_db = os.path.normcase(os.path.abspath(api._db_path))
+            if normalized_dest in (normalized_db, normalized_db + "-journal"):
+                return {"ok": False, "error": "Choose a different place to save the backup."}
+        snapshot = api._snapshot_for_backup_copy()
+        if not snapshot["ok"]:
+            return snapshot
+        return _copy_backup_snapshot(api, snapshot["snapshot"], dest)
+    except Exception as e:
+        api.log(f"save_backup_copy failed: {type(e).__name__}")
+        return {"ok": False, "error": "Couldn't save the backup."}
 
 
 def _make_backup(

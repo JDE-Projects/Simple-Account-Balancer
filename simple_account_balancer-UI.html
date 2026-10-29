@@ -711,6 +711,7 @@ table.register tr.compare-flash { animation:compareFlash 1.2s ease; }
       <div class="err" id="fr-err"></div>
       <div class="foot">
         <button class="btn primary" onclick="createAccount()">Get started</button>
+        <button class="btn" id="fr-restore-btn" onclick="firstRunRestoreClick()">Restore from a backup&hellip;</button>
       </div>
     </div>
   </div>
@@ -881,7 +882,7 @@ table.register tr.compare-flash { animation:compareFlash 1.2s ease; }
 
         <div class="am-section">
           <div class="am-section-title">Backups</div>
-          <div class="am-hint">Backups run automatically when the app opens and closes.</div>
+          <div class="am-hint">Backups cover all accounts and run automatically when the app opens and closes. Save backup copies them to a place you pick, such as a USB drive.</div>
           <div class="am-backup-row">
             <span class="mono am-backup-path" id="am-backup-path">Not set</span>
             <button class="btn" onclick="chooseBackupFolder()">Change folder</button>
@@ -892,6 +893,8 @@ table.register tr.compare-flash { animation:compareFlash 1.2s ease; }
             <input id="am-backup-keep" type="number" min="1" max="50" class="mono am-keep-input" onchange="onBackupKeepChange()">
             <span class="am-keep-label">backups</span>
           </div>
+          <button type="button" class="btn" id="am-save-backup-btn" onclick="saveBackupCopyClick()">Save backup&hellip;</button>
+          <div class="am-hint" id="am-backup-status" style="display:none;"></div>
           <button type="button" class="btn" onclick="openRestoreList()">Restore from backup</button>
         </div>
 
@@ -924,6 +927,7 @@ table.register tr.compare-flash { animation:compareFlash 1.2s ease; }
         <div class="restore-list" id="restoreList"></div>
         <div class="err" id="restore-list-err"></div>
         <div class="m-foot">
+          <button class="btn" id="restore-file-btn" onclick="restoreFromFileClick()">Restore from a file&hellip;</button>
           <button class="btn" onclick="closeRestoreList()">Back</button>
         </div>
       </div>
@@ -1102,6 +1106,19 @@ table.register tr.compare-flash { animation:compareFlash 1.2s ease; }
     </div>
   </div>
 
+  <!-- first-run restore confirm modal -->
+  <div class="modal-scrim" id="firstRunRestoreModalScrim">
+    <div class="modal">
+      <h3>Restore from a backup</h3>
+      <div class="m-msg" id="frr-msg"></div>
+      <div class="err" id="frr-err"></div>
+      <div class="m-foot">
+        <button class="btn" id="frr-cancel" onclick="cancelFirstRunRestore()">Cancel</button>
+        <button class="btn primary" id="frr-confirm" onclick="confirmFirstRunRestore()">Restore</button>
+      </div>
+    </div>
+  </div>
+
   <!-- confirm estimated amount modal -->
   <div class="modal-scrim" id="confirmEstimateModalScrim">
     <div class="modal">
@@ -1204,7 +1221,7 @@ let finderOpen = false;
 let accountMenuOpen = false;
 let exportRange = { from:null, to:null, label:null };
 let pendingDeleteAccountName = null;
-let RESTORE = { backups: [], preview: null, pendingFilename: null };
+let RESTORE = { backups: [], preview: null, pendingFilename: null, source: "list", token: null };
 
 /* ---------- autopays ---------- */
 let AUTOPAYS = [];
@@ -2184,6 +2201,7 @@ function openAccountModal(){
   $("acctModalScrim").classList.add("open");
 }
 function closeAccountModal(){
+  discardHeldRestoreFile();
   $("acctModalScrim").classList.remove("open");
 }
 /* Reads a starting balance the way Python's parse_amount_to_cents does
@@ -2366,6 +2384,7 @@ function renderBackupSection(){
   $("am-backup-path").title = STATE.backupFolder || "";
   $("am-backup-reset-btn").style.display = STATE.backupFolderIsCustom ? "inline-block" : "none";
   $("am-backup-keep").value = STATE.backupKeep || 5;
+  $("am-backup-status").style.display = "none";
 }
 async function chooseBackupFolder(){
   if (!api()) return;
@@ -2378,6 +2397,26 @@ async function chooseBackupFolder(){
   STATE.backupFolder = r.backup_folder;
   STATE.backupFolderIsCustom = !!r.backup_folder_is_custom;
   renderBackupSection();
+}
+async function saveBackupCopyClick(){
+  if (!api()) return;
+  const button = $("am-save-backup-btn");
+  button.disabled = true;
+  $("am-backup-status").style.display = "none";
+  try {
+    const r = await api().save_backup_copy();
+    if (r && r.cancelled) return;
+    if (!r || !r.ok){
+      $("am-err").textContent = ((r && r.error) || "Couldn't save the backup.")
+        + ((r && r.cleanup_warning) ? ` ${r.cleanup_warning}` : "");
+      return;
+    }
+    $("am-err").textContent = "";
+    $("am-backup-status").textContent = "Backup saved." + (r.cleanup_warning ? ` ${r.cleanup_warning}` : "");
+    $("am-backup-status").style.display = "block";
+  } finally {
+    button.disabled = false;
+  }
 }
 async function resetBackupFolderClick(){
   if (!api()) return;
@@ -2408,11 +2447,21 @@ async function onBackupKeepChange(){
 
 /* ---------- restore from backup ---------- */
 function resetRestoreScreens(){
+  discardHeldRestoreFile();
   $("amScreenRestoreList").style.display = "none";
   $("amScreenRestoreConfirm").style.display = "none";
   $("amScreenEdit").style.display = "block";
   RESTORE.preview = null;
   RESTORE.pendingFilename = null;
+  RESTORE.source = "list";
+}
+function discardHeldRestoreFile(){
+  const token = RESTORE.token;
+  RESTORE.token = null;
+  if (!token || !api()) return;
+  api().discard_restore_file(token).then(r => {
+    if (r && r.warning) showBackupNotice(r.warning);
+  });
 }
 function formatBackupDate(iso){
   const d = new Date(iso);
@@ -2420,13 +2469,16 @@ function formatBackupDate(iso){
   return d.toLocaleString([], { year:"numeric", month:"long", day:"numeric", hour:"numeric", minute:"2-digit" });
 }
 function openRestoreList(){
+  discardHeldRestoreFile();
   RESTORE.preview = null;
   RESTORE.pendingFilename = null;
+  RESTORE.source = "list";
   $("amScreenEdit").style.display = "none";
   $("amScreenRestoreList").style.display = "block";
   loadRestoreList();
 }
 function closeRestoreList(){
+  discardHeldRestoreFile();
   $("amScreenRestoreList").style.display = "none";
   $("amScreenEdit").style.display = "block";
 }
@@ -2480,6 +2532,33 @@ async function previewRestoreClick(filename){
   }
   RESTORE.preview = r;
   RESTORE.pendingFilename = filename;
+  RESTORE.source = "list";
+  $("restore-confirm-msg").innerHTML = buildRestoreConfirmHtml(r);
+  $("restore-confirm-err").textContent = "";
+  $("amScreenRestoreList").style.display = "none";
+  $("amScreenRestoreConfirm").style.display = "block";
+}
+async function restoreFromFileClick(){
+  const errEl = $("restore-list-err");
+  const button = $("restore-file-btn");
+  errEl.textContent = "";
+  if (!api()) return;
+  button.disabled = true;
+  let r;
+  try {
+    r = await api().choose_restore_file();
+  } finally {
+    button.disabled = false;
+  }
+  if (!r || r.cancelled) return;
+  if (!r.ok){
+    errEl.textContent = r.error || "Couldn't read that backup.";
+    return;
+  }
+  RESTORE.preview = r;
+  RESTORE.pendingFilename = null;
+  RESTORE.source = "file";
+  RESTORE.token = r.token;
   $("restore-confirm-msg").innerHTML = buildRestoreConfirmHtml(r);
   $("restore-confirm-err").textContent = "";
   $("amScreenRestoreList").style.display = "none";
@@ -2522,23 +2601,36 @@ function buildRestoreConfirmHtml(preview){
   lines.push(preview.autopays === "same"
     ? "<strong>Autopays</strong>: no differences."
     : "<strong>Autopays</strong>: will change back to the backup's version.");
-  return `<strong>Restore the backup from ${esc(dateStr)}?</strong>` +
+  const heading = RESTORE.source === "file"
+    ? `Restore <strong>${esc(preview.source_name)}</strong>, saved ${esc(dateStr)}?`
+    : `<strong>Restore the backup from ${esc(dateStr)}?</strong>`;
+  return heading +
     `<span class="m-detail">Compared to your current register:<br>${lines.join("<br>")}</span>` +
     `<span class="m-detail">Your current register will be backed up first, so this can be undone.</span>`;
 }
 function cancelRestoreConfirm(){
+  discardHeldRestoreFile();
   $("amScreenRestoreConfirm").style.display = "none";
   $("amScreenRestoreList").style.display = "block";
 }
 async function confirmRestore(){
-  if (!RESTORE.pendingFilename || !api()) return;
+  if ((!RESTORE.pendingFilename && RESTORE.source !== "file") || !api()) return;
   const errEl = $("restore-confirm-err");
   errEl.textContent = "";
-  const r = await api().restore_backup(RESTORE.pendingFilename, RESTORE.preview && RESTORE.preview.fingerprint);
+  const r = RESTORE.source === "file"
+    ? await api().restore_from_file(RESTORE.token, RESTORE.preview && RESTORE.preview.fingerprint)
+    : await api().restore_backup(RESTORE.pendingFilename, RESTORE.preview && RESTORE.preview.fingerprint);
   if (!r || !r.ok){
     errEl.textContent = (r && r.error) || "Couldn't restore that backup.";
+    if (r && r.selection_cleared){
+      RESTORE.token = null;
+      $("amScreenRestoreConfirm").style.display = "none";
+      $("restore-list-err").textContent = r.error || "Couldn't restore that backup.";
+      $("amScreenRestoreList").style.display = "block";
+    }
     return;
   }
+  RESTORE.token = null;
   applyConfig(r);
   closeAccountModal();
   await Promise.all([refreshForActiveAccount(), refreshCategories()]);
@@ -2667,6 +2759,96 @@ function showFirstRunView(){
   $("fr-date").value = todayIso();
   $("fr-name").focus();
 }
+async function firstRunRestoreClick(){
+  const errEl = $("fr-err");
+  const button = $("fr-restore-btn");
+  errEl.textContent = "";
+  if (!api()) return;
+  button.disabled = true;
+  let r;
+  try {
+    r = await api().choose_restore_file();
+  } catch (e) {
+    errEl.textContent = (e && e.message) || "Couldn't read that backup.";
+    return;
+  } finally {
+    button.disabled = false;
+  }
+  if (!r || r.cancelled) return;
+  if (!r.ok){
+    errEl.textContent = r.error || "Couldn't read that backup.";
+    return;
+  }
+  RESTORE.preview = r;
+  RESTORE.token = r.token;
+  RESTORE.source = "file";
+  RESTORE.pendingFilename = null;
+  if (r.accounts.length === 0){
+    discardHeldRestoreFile();
+    errEl.textContent = "That backup has no accounts in it.";
+    return;
+  }
+  $("frr-msg").innerHTML = buildFirstRunRestoreConfirmHtml(r);
+  $("frr-err").textContent = "";
+  $("firstRunRestoreModalScrim").classList.add("open");
+}
+function buildFirstRunRestoreConfirmHtml(preview){
+  const date = esc(formatBackupDate(preview.timestamp));
+  const accounts = preview.accounts.map(account => {
+    const count = esc(account.count);
+    const txWord = account.count === 1 ? "transaction" : "transactions";
+    return `${esc(account.name)} (${count} ${txWord})`;
+  });
+  return `Restore <strong>${esc(preview.source_name)}</strong>, saved ${date}?` +
+    `<span class="m-detail">It holds:<br>${accounts.join("<br>")}</span>`;
+}
+function closeFirstRunRestoreModal(){
+  $("firstRunRestoreModalScrim").classList.remove("open");
+}
+function cancelFirstRunRestore(){
+  closeFirstRunRestoreModal();
+  discardHeldRestoreFile();
+}
+async function confirmFirstRunRestore(){
+  if (!api()) return;
+  const errEl = $("frr-err");
+  const cancelButton = $("frr-cancel");
+  const confirmButton = $("frr-confirm");
+  errEl.textContent = "";
+  cancelButton.disabled = true;
+  confirmButton.disabled = true;
+  try {
+    const r = await api().restore_from_file(RESTORE.token, RESTORE.preview && RESTORE.preview.fingerprint);
+    if (!r || !r.ok){
+      const error = (r && r.error) || "Couldn't restore that backup.";
+      errEl.textContent = error;
+      if (r && r.selection_cleared){
+        RESTORE.token = null;
+        closeFirstRunRestoreModal();
+        $("fr-err").textContent = error;
+      }
+      return;
+    }
+    RESTORE.token = null;
+    closeFirstRunRestoreModal();
+    applyConfig(r);
+    showRegisterView();
+    await Promise.all([loadRegister(), refreshCategories(), refreshPayees()]);
+    if (r.warning) showBackupNotice(r.warning);
+  } catch (e) {
+    errEl.textContent = (e && e.message) || "Couldn't restore that backup.";
+  } finally {
+    cancelButton.disabled = false;
+    confirmButton.disabled = false;
+  }
+}
+document.addEventListener("keydown", event => {
+  // Ignored while a restore is running, so its result is never hidden.
+  if (event.key === "Escape" && $("firstRunRestoreModalScrim").classList.contains("open")
+      && !$("frr-confirm").disabled){
+    cancelFirstRunRestore();
+  }
+});
 
 /* ---------- manage categories modal ---------- */
 function openCategoryModal(){
