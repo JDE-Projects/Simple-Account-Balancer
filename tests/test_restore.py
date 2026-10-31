@@ -338,10 +338,35 @@ def test_restore_rolls_back_when_reopen_after_replace_fails(tmp_path, monkeypatc
     result = api.restore_backup(BACKUP_NAME)
 
     assert result["ok"] is False
+    assert result["error"] == "The restore failed and your data was put back."
     assert _account_names(db_path) == ["Live"]
     assert api._conn is not None
     _assert_no_restore_temps(tmp_path)
     api.close_conn()
+
+
+def test_restore_reports_restart_when_reopen_after_rollback_fails(tmp_path, monkeypatch):
+    api, db_path, backups = _make_api(tmp_path, monkeypatch)
+    _backup_with_account(api, backups)
+    real_open_db = db.open_db
+
+    def fail_live_reopens(path):
+        conn = real_open_db(path)
+        if path == db_path:
+            conn.close()
+            raise RuntimeError("reopen failed")
+        return conn
+
+    monkeypatch.setattr(db, "open_db", fail_live_reopens)
+    result = api.restore_backup(BACKUP_NAME)
+
+    assert result["ok"] is False
+    assert result["error"] == (
+        "The restore failed and your data was put back. Close the app and open it again."
+    )
+    assert api._conn is None
+    assert _account_names(db_path) == ["Live"]
+    _assert_no_restore_temps(tmp_path)
 
 
 def test_restore_reports_manual_recovery_when_rollback_replace_fails(tmp_path, monkeypatch):
