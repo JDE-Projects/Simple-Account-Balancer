@@ -93,7 +93,7 @@ def add_autopay(api, account_id, payee, category, notes, amount, direction, post
         if category_s:
             cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
         api._conn.commit()
-        api._log(f"Added autopay, next post {post_s}, next pay {pay_s}")
+        api._log("Added autopay")
         posted = 0
         post_failed = False
         try:
@@ -161,7 +161,7 @@ def update_autopay(api, autopay_id, payee, category, notes, amount, direction, p
         if category_s:
             cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
         api._conn.commit()
-        api._log(f"Updated autopay {autopay_id}, next post {post_s}, next pay {pay_s}")
+        api._log(f"Updated autopay {autopay_id}")
         posted = 0
         post_failed = False
         try:

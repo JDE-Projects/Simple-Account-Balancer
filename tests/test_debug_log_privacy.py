@@ -53,16 +53,16 @@ def test_log_is_not_exposed_to_the_page():
 def test_typed_values_never_reach_log_on_success(tmp_path):
     api = _make_api(tmp_path)
     try:
-        assert api.create_account(f"{MARKER} account", "10.00", "2024-01-01")["ok"] is True
+        assert api.create_account(f"{MARKER} account", "10.00", "2031-07-11")["ok"] is True
         account_id = api._conn.execute("SELECT id FROM accounts").fetchone()[0]
-        assert api.update_account(account_id, f"{MARKER} account updated", "12.00", "2024-01-02")["ok"] is True
+        assert api.update_account(account_id, f"{MARKER} account updated", "12.00", "2031-07-12")["ok"] is True
 
         assert api.add_transaction(
-            account_id, "2024-01-03", f"{MARKER} payee", f"{MARKER} category", f"{MARKER} notes", "1.00", "withdraw",
+            account_id, "2031-07-13", f"{MARKER} payee", f"{MARKER} category", f"{MARKER} notes", "1.00", "withdraw",
         )["ok"] is True
         transaction_id = api._conn.execute("SELECT id FROM transactions").fetchone()[0]
         assert api.update_transaction(
-            transaction_id, "2024-01-04", f"{MARKER} payee updated", f"{MARKER} category updated", f"{MARKER} notes updated", "2.00", "deposit",
+            transaction_id, "2031-07-14", f"{MARKER} payee updated", f"{MARKER} category updated", f"{MARKER} notes updated", "2.00", "deposit",
         )["ok"] is True
 
         assert api.add_category(f"{MARKER} extra category")["ok"] is True
@@ -71,19 +71,22 @@ def test_typed_values_never_reach_log_on_success(tmp_path):
 
         assert api.add_autopay(
             account_id, f"{MARKER} autopay payee", f"{MARKER} autopay category", f"{MARKER} autopay notes",
-            "3.00", "withdraw", "2024-02-01", "2024-02-02",
+            "3.00", "withdraw", "2031-07-15", "2031-07-16",
         )["ok"] is True
         autopay_id = api._conn.execute("SELECT id FROM autopays").fetchone()[0]
         assert api.update_autopay(
             autopay_id, f"{MARKER} autopay payee updated", f"{MARKER} autopay category updated", f"{MARKER} autopay notes updated",
-            "4.00", "deposit", "2024-02-03", "2024-02-04",
+            "4.00", "deposit", "2031-07-17", "2031-07-18",
         )["ok"] is True
+        assert api.reorder_transactions(account_id, "2031-07-14", [transaction_id])["ok"] is True
         merge_target = api._conn.execute("SELECT name FROM categories WHERE id<>? LIMIT 1", (category_id,)).fetchone()[0]
         assert api.delete_category(category_id, merge_target)["ok"] is True
 
         text = _log_text(tmp_path)
         assert MARKER not in text
-        assert "Added transaction dated" in text
+        assert "2031" not in text
+        assert "Added transaction" in text
+        assert "Reordered 1 transaction(s)" in text
     finally:
         api.close_conn()
 
