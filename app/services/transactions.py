@@ -118,7 +118,7 @@ def add_transaction(api, account_id, date, payee, category, notes, amount, direc
         if category_s:
             cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
         api._conn.commit()
-        api._log(f"Added transaction dated {date_s}")
+        api._log("Added transaction")
         return {"ok": True}
     except Exception as e:
         api._log(f"add_transaction failed: {utils.describe_error(e)}")
@@ -178,7 +178,7 @@ def update_transaction(api, transaction_id, date, payee, category, notes, amount
         if category_s:
             cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category_s,))
         api._conn.commit()
-        api._log(f"Updated transaction {transaction_id}, dated {date_s}")
+        api._log(f"Updated transaction {transaction_id}")
         return {"ok": True}
     except Exception as e:
         api._log(f"update_transaction failed: {utils.describe_error(e)}")
@@ -231,7 +231,7 @@ def reorder_transactions(api, account_id, date, ordered_ids):
                 (position, transaction_id),
             )
         api._conn.commit()
-        api._log(f"Reordered {len(ordered)} transaction(s) on {date_s}")
+        api._log(f"Reordered {len(ordered)} transaction(s)")
         return {"ok": True}
     except Exception as e:
         api._log(f"reorder_transactions failed: {utils.describe_error(e)}")

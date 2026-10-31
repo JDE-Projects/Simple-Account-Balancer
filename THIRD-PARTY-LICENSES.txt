@@ -3037,7 +3037,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ============================================================
-setuptools 84.0.0
+setuptools 84.2.1
 ============================================================
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to
@@ -3167,14 +3167,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ============================================================
-setuptools vendored packaging 26.0
+setuptools vendored packaging 26.3
 ============================================================
 This software is made available under the terms of *either* of the licenses
 found in LICENSE.APACHE or LICENSE.BSD. Contributions to this software is made
 under the terms of *both* these licenses.
 
 ============================================================
-setuptools vendored packaging 26.0 LICENSE.APACHE
+setuptools vendored packaging 26.3 LICENSE.APACHE
 ============================================================
 
                                  Apache License
@@ -3355,7 +3355,7 @@ setuptools vendored packaging 26.0 LICENSE.APACHE
    END OF TERMS AND CONDITIONS
 
 ============================================================
-setuptools vendored packaging 26.0 LICENSE.BSD
+setuptools vendored packaging 26.3 LICENSE.BSD
 ============================================================
 Copyright (c) Donald Stufft and individual contributors.
 All rights reserved.
@@ -3432,7 +3432,7 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 
 ============================================================
-truststore 0.10.4
+truststore 0.10.5
 ============================================================
 The MIT License (MIT)
 

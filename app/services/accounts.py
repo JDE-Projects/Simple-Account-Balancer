@@ -112,7 +112,7 @@ def create_account(api, name, starting_balance, starting_date):
         prefs_data["active_account_id"] = new_id
         if not prefs.save_prefs(prefs_data):
             api._log("Could not save active account pref")
-        api._log(f"Account {new_id} created, starting as of {date_s}")
+        api._log(f"Account {new_id} created")
         return api.get_config()
     except Exception as e:
         api._log(f"create_account failed: {utils.describe_error(e)}")
@@ -201,7 +201,7 @@ def update_account(api, account_id, name, starting_balance, starting_date):
                 (name_s, cents, date_s, account["id"]),
             )
         api._conn.commit()
-        api._log(f"Account {account['id']} updated, starting as of {date_s}")
+        api._log(f"Account {account['id']} updated")
         return api.get_config()
     except Exception as e:
         api._log(f"update_account failed: {utils.describe_error(e)}")
