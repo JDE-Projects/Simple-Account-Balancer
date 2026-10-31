@@ -597,7 +597,11 @@ def _restore_from_path(api, full_path, fingerprint):
                 else (
                     "The restore failed. Nothing was changed, so you can try again."
                     if prerestore_path is None
-                    else "The restore failed and your data was put back."
+                    else (
+                        "The restore failed and your data was put back. Close the app and open it again."
+                        if api._conn is None
+                        else "The restore failed and your data was put back."
+                    )
                 )
             )
             return {"ok": False, "error": error}
