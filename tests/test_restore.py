@@ -319,6 +319,75 @@ def test_restore_recovers_when_replace_fails(tmp_path, monkeypatch):
     api.close_conn()
 
 
+def _fail_live_reopens(monkeypatch, db_path):
+    real_open_db = db.open_db
+
+    def fail_live_reopens(path):
+        conn = real_open_db(path)
+        if path == db_path:
+            conn.close()
+            raise RuntimeError("reopen failed")
+        return conn
+
+    monkeypatch.setattr(db, "open_db", fail_live_reopens)
+
+
+@pytest.mark.parametrize("reopen_fails", [False, True])
+def test_restore_journal_cancel_says_restart_only_when_reopen_fails(tmp_path, monkeypatch, reopen_fails):
+    api, db_path, backups = _make_api(tmp_path, monkeypatch)
+    _backup_with_account(api, backups)
+    journal = Path(db_path + "-journal")
+    real_close_conn = api.close_conn
+
+    def close_then_leave_journal():
+        closed = real_close_conn()
+        journal.write_bytes(b"")
+        return closed
+
+    monkeypatch.setattr(api, "close_conn", close_then_leave_journal)
+    if reopen_fails:
+        _fail_live_reopens(monkeypatch, db_path)
+    result = api.restore_backup(BACKUP_NAME)
+
+    expected = "The live database has an unfinished journal, so the restore was cancelled."
+    if reopen_fails:
+        expected += " Close the app and open it again."
+    assert result["ok"] is False
+    assert result["error"] == expected
+    assert (api._conn is None) is reopen_fails
+    real_close_conn()
+    journal.unlink(missing_ok=True)
+    assert _account_names(db_path) == ["Live"]
+    _assert_no_restore_temps(tmp_path)
+
+
+@pytest.mark.parametrize("reopen_fails", [False, True])
+def test_restore_replace_failure_says_restart_only_when_reopen_fails(tmp_path, monkeypatch, reopen_fails):
+    api, db_path, backups = _make_api(tmp_path, monkeypatch)
+    _backup_with_account(api, backups)
+    real_replace = restore.os.replace
+
+    def fail_stage_replace(src, dst):
+        if os.path.basename(src).startswith(".balancer_restore_stage_"):
+            raise OSError("replace failed")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(restore.os, "replace", fail_stage_replace)
+    if reopen_fails:
+        _fail_live_reopens(monkeypatch, db_path)
+    result = api.restore_backup(BACKUP_NAME)
+
+    expected = "Couldn't put the backup into place. Nothing was changed."
+    if reopen_fails:
+        expected += " Close the app and open it again."
+    assert result["ok"] is False
+    assert result["error"] == expected
+    assert (api._conn is None) is reopen_fails
+    assert _account_names(db_path) == ["Live"]
+    _assert_no_restore_temps(tmp_path)
+    api.close_conn()
+
+
 def test_restore_rolls_back_when_reopen_after_replace_fails(tmp_path, monkeypatch):
     api, db_path, backups = _make_api(tmp_path, monkeypatch)
     _backup_with_account(api, backups)

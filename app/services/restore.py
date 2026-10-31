@@ -532,7 +532,10 @@ def _restore_from_path(api, full_path, fingerprint):
             api._log("restore_backup refused to replace a database with a journal beside it")
             if cleanup_failures:
                 api._log("restore_backup couldn't clean up temporary restore files")
-            return {"ok": False, "error": "The live database has an unfinished journal, so the restore was cancelled."}
+            error = "The live database has an unfinished journal, so the restore was cancelled."
+            if api._conn is None:
+                error += " Close the app and open it again."
+            return {"ok": False, "error": error}
 
         try:
             os.replace(staged_path, db_path)
@@ -547,10 +550,10 @@ def _restore_from_path(api, full_path, fingerprint):
             api._log(f"restore_backup replace failed; live database was not changed: {utils.describe_error(e)}")
             if cleanup_failures:
                 api._log("restore_backup couldn't clean up temporary restore files")
-            return {
-                "ok": False,
-                "error": "Couldn't put the backup into place. Nothing was changed.",
-            }
+            error = "Couldn't put the backup into place. Nothing was changed."
+            if api._conn is None:
+                error += " Close the app and open it again."
+            return {"ok": False, "error": error}
 
         try:
             api.set_conn(db.open_db(db_path))
