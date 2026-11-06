@@ -80,6 +80,24 @@ def strip_remote_debugging(environ, argv, frozen):
     argv[1:] = _drop_remote_debugging(argv[1:])
 
 
+def _is_disable_gpu_switch(token):
+    for prefix in ("--", "-", "/"):
+        if token.startswith(prefix):
+            return token[len(prefix):].lower() == "disable-gpu"
+    return False
+
+
+def use_software_drawing(environ):
+    """Make the built-in browser draw in software rather than on the graphics
+    card. Graphics-card drawing makes typed characters vanish and the
+    register flash on some NVIDIA desktops. Flags the user already set are
+    kept as written."""
+    flags = environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+    if any(_is_disable_gpu_switch(token) for token in flags.split()):
+        return
+    environ["QTWEBENGINE_CHROMIUM_FLAGS"] = f"{flags} --disable-gpu".strip()
+
+
 _mutex_handle = None   # module-level: must live for the process lifetime
 _mutex_acquisition_error = False
 
@@ -188,6 +206,7 @@ def main():
     # the uninstaller never removes. Must be set before the window is created.
     os.environ.setdefault("QT_DISABLE_SHADER_DISK_CACHE", "1")
     strip_remote_debugging(os.environ, sys.argv, getattr(sys, "frozen", False))
+    use_software_drawing(os.environ)
 
     # Use the Windows certificate store for TLS instead of the bundled CA list,
     # so antivirus/network filters that inject their own root cert (common on
